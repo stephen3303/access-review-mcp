@@ -1,0 +1,3 @@
+*.mcpb
+dist/
+*.Tests.ps1
