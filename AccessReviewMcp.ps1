@@ -12,7 +12,7 @@ $utf8 = New-Object Text.UTF8Encoding($false)
 
 . (Join-Path $PSScriptRoot 'AccessReview.ps1')
 
-$ServerVersion = '0.4.1'
+$ServerVersion = '0.4.2'
 
 function Send-Message($obj) {
     [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 20 -Compress))

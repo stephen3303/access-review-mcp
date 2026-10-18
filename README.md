@@ -9,6 +9,8 @@ AccessReview.ps1      the review functions (usable from plain PowerShell too)
 AccessReviewMcp.ps1   the MCP server (stdio) that exposes them as tools
 FormSnapshot.ps1      reads and compares form snapshots (no Access needed)
 FormSnapshot.Tests.ps1  checks for FormSnapshot.ps1
+ReviewSentry.ps1      optional reporting of findings to Sentry (off unless a DSN is set)
+ReviewSentry.Tests.ps1  checks for ReviewSentry.ps1 (no Access or network needed)
 manifest.json         desktop extension manifest (for the .mcpb package)
 ```
 
@@ -66,6 +68,8 @@ All optional. In the extension they are fields on its settings page; with a conf
 | Shared lock files | `ACCESS_REVIEW_LOCKS` | none | Full paths of lock files, separated by `;`, for a PC several reviewers take turns on. `review_lock` takes all or none; with none configured it does nothing. |
 | Palettes | `ACCESS_REVIEW_PALETTES` | `Navy=1;Midnight=2;Teal Navy=6` | Palettes `set_palette` offers, as `name=number`. The number is passed to the palette procedure. The first one is the default: `close_app` switches back to it. A malformed value is ignored with a warning (in the server log, its instructions and each `set_palette` result) and the defaults are used. |
 | Palette procedure | `ACCESS_REVIEW_PALETTE_PROCEDURE` | `SetPalette` | Public VBA `Sub Name(ByVal i As Long)` in your front end that switches palettes. |
+| Sentry DSN | `ACCESS_REVIEW_SENTRY_DSN` | none (off) | Reports findings to a Sentry project; see [Reporting to Sentry](#reporting-to-sentry). |
+| (config file only) | `ACCESS_REVIEW_SENTRY_ENVIRONMENT` | `review` | Environment name on each Sentry report, for example the machine's role. |
 
 Example `env` for a config file:
 
@@ -106,6 +110,14 @@ In off-screen mode a watcher keeps every Access window, including popups the app
 - Nothing, for opening, sizing, capturing, controls, dialogs, compile and run.
 - For `error_log`: a table named `error_log` with columns `id`, `logged_at`, `error_number`, `description`, `source`, `active_form`, `active_control`, and/or a public `LogFilePath()` function returning a text log's path. [access-modern-ui's `modErrors.bas`](https://github.com/stephen3303/access-modern-ui/blob/main/examples/modules/modErrors.bas) provides both.
 - For `set_palette`: a public palette procedure (see [Settings](#settings)). Apps built on access-modern-ui have `SetPalette`.
+
+### Reporting to Sentry
+
+Off unless **Sentry DSN** / `ACCESS_REVIEW_SENTRY_DSN` is set. Then each new `error_log` row or `errors.log` entry (reported once, however often `error_log` is read) and each VBA or Office message box, hang or Access exit that the guard sees becomes a Sentry event, so findings from every review run collect in one place with a history across runs. Kit dialogs and popup forms are not reported.
+
+Only these fields are sent: the front end's file name, the error number, the procedure with its line, the form and control names, the kind of finding, the Access version and the tool version. The error description, call trail, context, the dialog's text, user names and the computer name are never sent, because an Access message can quote field values. Events group by front end, kind, error number and procedure (without the line), so the same error after an edit that moved it stays one issue; identical findings in one call go as one event with an `occurrences` tag. Self-hosted DSNs with a secret, port or path work too.
+
+Each send has a 5 s timeout and never fails a tool call; after the first failed send the session stops trying. `error_log` results include `ReportedToSentry`, the number of findings the accepted events covered. Code: [`ReviewSentry.ps1`](ReviewSentry.ps1); checks without Access or a network: `powershell -NoProfile -File ReviewSentry.Tests.ps1`.
 
 ## Typical review run
 

@@ -29,10 +29,13 @@
 #   ACCESS_REVIEW_OUTPUT             folder for captures (default %LOCALAPPDATA%\AccessReview)
 #   ACCESS_REVIEW_PALETTES           name=value pairs for set_palette, separated by ';'
 #   ACCESS_REVIEW_PALETTE_PROCEDURE  public VBA procedure that switches palettes
+#   ACCESS_REVIEW_SENTRY_DSN         report findings to this Sentry project (see ReviewSentry.ps1)
+#   ACCESS_REVIEW_SENTRY_ENVIRONMENT environment name on those reports (default review)
 
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'FormSnapshot.ps1')
+. (Join-Path $PSScriptRoot 'ReviewSentry.ps1')
 
 if (-not ('KitReviewWin' -as [type])) {
     Add-Type @'
@@ -418,6 +421,7 @@ function Invoke-ReviewGuarded {
     try { $value = & $Body } catch { $failure = $_.Exception.Message }
     $events = @($guard.Stop())
     $r.Dialogs += $events
+    if ($events.Count) { [void](Send-ReviewSentry (ConvertFrom-ReviewDialogNotes $events -App (Split-Path $r.Path -Leaf) -AccessVersion $r.AccessVersion)) }
     if ($guard.Killed) { $script:Review = $null }
     if ($failure) {
         $msg = "Access call failed: $failure"
@@ -604,6 +608,7 @@ function Open-ReviewApp {
     $script:Review = [pscustomobject]@{
         Acc = $acc; Hwnd = $hwnd; Pid = $proc.Id; Process = $proc; Path = $Path; Mode = $Mode; Out = $OutputDirectory
         Palette = $script:DefaultPalette; Dialogs = @(); LogMark = $null; FileMark = $null; Sizes = @{}; Keeper = $keeper
+        AccessVersion = $(try { [string]$acc.Version } catch { $null }); SentryLastId = 0; SentryFileLength = 0
     }
     try {
         # ModalSec 0: a splash or sign-in form shown at startup is left open.
@@ -1083,7 +1088,7 @@ function Get-ReviewErrorLog {
     param([switch]$Mark)
     Assert-ReviewOpen
     $acc = $script:Review.Acc
-    $table = $null; $maxId = 0; $rows = @()
+    $table = $null; $maxId = 0; $rows = @(); $sentry = @()
     try {
         $db = $acc.CurrentDb()
         $rs = $db.OpenRecordset('SELECT Max(id) AS m FROM error_log')
@@ -1104,6 +1109,15 @@ function Get-ReviewErrorLog {
     if ($table -and $maxId -gt $mk.Id) {
         $rs = $db.OpenRecordset("SELECT id, logged_at, error_number, description, source, active_form, active_control FROM error_log WHERE id > $($mk.Id) ORDER BY id")
         while (-not $rs.EOF) {
+            # Each entry is reported once, however often the log is read after the mark.
+            $id = [long]$rs.Fields.Item('id').Value
+            if ($id -gt $script:Review.SentryLastId) {
+                $num = $rs.Fields.Item('error_number').Value
+                $sentry += New-ReviewSentryEvent -Kind error_log -App (Split-Path $script:Review.Path -Leaf) -AccessVersion $script:Review.AccessVersion `
+                    -ErrorNumber $(if ($num -is [DBNull] -or $null -eq $num) { 0 } else { [long]$num }) -Procedure ([string]$rs.Fields.Item('source').Value) `
+                    -Form ([string]$rs.Fields.Item('active_form').Value) -Control ([string]$rs.Fields.Item('active_control').Value)
+                $script:Review.SentryLastId = $id
+            }
             $rows += [pscustomobject]@{ Id = $rs.Fields.Item('id').Value; At = [string]$rs.Fields.Item('logged_at').Value
                                         Error = "$($rs.Fields.Item('error_number').Value): $($rs.Fields.Item('description').Value)"
                                         Procedure = [string]$rs.Fields.Item('source').Value
@@ -1117,5 +1131,13 @@ function Get-ReviewErrorLog {
         $fs = [IO.File]::Open($file, 'Open', 'Read', 'ReadWrite')
         try { [void]$fs.Seek($mk.Length, 'Begin'); $fileText = (New-Object IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Close() }
     }
-    [pscustomobject]@{ NewEntries = $rows.Count; Entries = @($rows); NewFileText = $fileText; SinceId = $mk.Id }
+    if ($fileText -and $len -gt $script:Review.SentryFileLength) {
+        $skip = [Math]::Max(0, $script:Review.SentryFileLength - $mk.Length)
+        if ($skip -lt $fileText.Length) {
+            $sentry += @(ConvertFrom-ReviewLogText $fileText.Substring([int]$skip) -App (Split-Path $script:Review.Path -Leaf) -AccessVersion $script:Review.AccessVersion)
+        }
+        $script:Review.SentryFileLength = $len
+    }
+    $reported = Send-ReviewSentry $sentry
+    [pscustomobject]@{ NewEntries = $rows.Count; Entries = @($rows); NewFileText = $fileText; SinceId = $mk.Id; ReportedToSentry = $reported }
 }
