@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "access-review",
   "display_name": "Access Review",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Visual review of Microsoft Access front ends without touching the desktop: opens forms off screen, sizes them, captures them and checks for VBA dialogs and logged errors.",
   "long_description": "Access Review lets Claude review the forms of a Microsoft Access front end while you keep using the same PC. It starts its own Access instance over COM, keeps every Access window just past the edge of the desktop, and captures forms with PrintWindow, so nothing comes to the front, nothing takes focus and no mouse or keyboard input is sent.\n\nTools open a front end, open and size forms to their designed dimensions, capture PNGs (whole form or a zoomed crop), list control positions and colours for spacing checks, catch and close VBA and Office message boxes, compile, run public VBA procedures, read the app's error log, snapshot form definitions and compare two builds property by property, and switch colour palettes in apps that have a palette procedure.\n\nWindows only. Needs desktop Microsoft Access (tested with Microsoft 365) and Windows PowerShell 5.1, which comes with Windows. Open only front ends you trust: under automation Access runs their startup code without the Enable Content bar, so the extension opens files only from the folder you choose and refuses files downloaded from the internet.",
   "author": {
@@ -33,7 +33,8 @@
         "ACCESS_REVIEW_OUTPUT": "${user_config.output_dir}",
         "ACCESS_REVIEW_LOCKS": "${user_config.lock_files}",
         "ACCESS_REVIEW_PALETTES": "${user_config.palettes}",
-        "ACCESS_REVIEW_PALETTE_PROCEDURE": "${user_config.palette_procedure}"
+        "ACCESS_REVIEW_PALETTE_PROCEDURE": "${user_config.palette_procedure}",
+        "ACCESS_REVIEW_SENTRY_DSN": "${user_config.sentry_dsn}"
       }
     }
   },
@@ -88,6 +89,12 @@
       "type": "string",
       "title": "Palette procedure",
       "description": "Public VBA Sub in your front end that switches palettes, taking the palette number. Leave blank for SetPalette.",
+      "required": false
+    },
+    "sentry_dsn": {
+      "type": "string",
+      "title": "Sentry DSN",
+      "description": "Optional. Reports new error-log entries and VBA message boxes to this Sentry project: error number, procedure, form and control only, never the error text, dialog text, user or computer names. Leave blank to report nothing.",
       "required": false
     }
   }
