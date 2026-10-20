@@ -2,9 +2,9 @@
   "manifest_version": "0.3",
   "name": "access-review",
   "display_name": "Access Review",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Visual review of Microsoft Access front ends without touching the desktop: opens forms off screen, sizes them, captures them and checks for VBA dialogs and logged errors.",
-  "long_description": "Access Review lets Claude review the forms of a Microsoft Access front end while you keep using the same PC. It starts its own Access instance over COM, keeps every Access window just past the edge of the desktop, and captures forms with PrintWindow, so nothing comes to the front, nothing takes focus and no mouse or keyboard input is sent.\n\nTools open a front end, open and size forms to their designed dimensions, capture PNGs (whole form or a zoomed crop), list control positions and colours for spacing checks, catch and close VBA and Office message boxes, compile, run public VBA procedures, read the app's error log, snapshot form definitions and compare two builds property by property, and switch colour palettes in apps that have a palette procedure.\n\nWindows only. Needs desktop Microsoft Access (tested with Microsoft 365) and Windows PowerShell 5.1, which comes with Windows. Open only front ends you trust: under automation Access runs their startup code without the Enable Content bar, so the extension opens files only from the folder you choose and refuses files downloaded from the internet.",
+  "long_description": "Access Review lets Claude review the forms of a Microsoft Access front end while you keep using the same PC. It starts its own Access instance over COM, keeps every Access window just past the edge of the desktop, and captures forms with PrintWindow, so nothing comes to the front, nothing takes focus and no mouse or keyboard input is sent.\n\nTools open a front end, open and size forms to their designed dimensions, capture PNGs (whole form or a zoomed crop), list control positions and colours for spacing checks, catch and close VBA and Office message boxes, compile, run public VBA procedures, read the app's error log, snapshot form definitions and compare two builds property by property, export form designs as JSON for rebuilding them elsewhere, and switch colour palettes in apps that have a palette procedure.\n\nWindows only. Needs desktop Microsoft Access (tested with Microsoft 365) and Windows PowerShell 5.1, which comes with Windows. Open only front ends you trust: under automation Access runs their startup code without the Enable Content bar, so the extension opens files only from the folder you choose and refuses files downloaded from the internet.",
   "author": {
     "name": "Stephen Smitherman",
     "url": "https://github.com/stephen3303"
@@ -47,6 +47,7 @@
     { "name": "controls", "description": "Position, size, caption and colours of every control on a form." },
     { "name": "snapshot", "description": "Save forms' definitions (SaveAsText) as a labelled snapshot." },
     { "name": "compare_snapshots", "description": "Compare two snapshots property by property: added, removed and changed controls." },
+    { "name": "export_design", "description": "Write a snapshot's forms as JSON designs for rebuilding them in another app or as HTML." },
     { "name": "dialogs", "description": "List, capture and close message boxes and popups." },
     { "name": "error_log", "description": "Mark the app's error log, then list entries added since." },
     { "name": "compile", "description": "Compile and save all VBA modules." },

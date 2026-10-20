@@ -12,7 +12,7 @@ $utf8 = New-Object Text.UTF8Encoding($false)
 
 . (Join-Path $PSScriptRoot 'AccessReview.ps1')
 
-$ServerVersion = '0.4.2'
+$ServerVersion = '0.5.0'
 
 function Send-Message($obj) {
     [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 20 -Compress))
@@ -78,6 +78,9 @@ $Tools = @(
     @{ name = 'compare_snapshots'; description = 'Compare two snapshots property by property (Access need not be open): forms and controls added or removed, and every changed property with before and after values, positions in 96 dpi px and colours as #RRGGBB. Properties Access rewrites on every save (checksums, GUIDs, printer data, cached layout) are ignored; pictures compare by hash; code behind the form is left to the PR diff. Saves the full report as a text file.'
        schema = (Schema @{ before = $str; after = $str; forms = @{ type = 'array'; items = $str; description = 'Only these forms; default all.' } } @('before', 'after'))
        run = { param($a) $f = Arg $a 'forms'; Compare-ReviewSnapshot -Before (Arg $a 'before') -After (Arg $a 'after') -Forms $(if ($f) { [string[]]@($f) } else { $null }) } }
+    @{ name = 'export_design'; description = 'Write a snapshot''s forms as JSON designs (Access need not be open), one <form>.json per form plus index.json, under designs\<label> in the output folder, for rebuilding the forms in another app or as HTML pages. Each file has the form''s properties and its sections in order, each with its controls: position and size in 96 dpi px, colours as #RRGGBB, text unquoted, event handlers listed apart, controls on tab pages and in option groups nested under them. With theme_file (the app''s build palette, modTheme.bas, as a full path) each colour also names its kit token and tokens.json lists them. Holds the form as built: changes code makes when the form opens are not in it, and pictures are a hash.'
+       schema = (Schema @{ label = $str; theme_file = @{ type = 'string'; description = 'Full path of the app''s modTheme.bas; optional.' }; forms = @{ type = 'array'; items = $str; description = 'Only these forms; default all.' } } @('label'))
+       run = { param($a) $f = Arg $a 'forms'; Export-ReviewDesign -Label (Arg $a 'label') -ThemeFile (Arg $a 'theme_file') -Forms $(if ($f) { [string[]]@($f) } else { $null }) } }
     @{ name = 'dialogs'; description = 'List (and capture) open message boxes and popup windows of this Access instance, plus dialogs seen during earlier calls. close=true closes the open ones.'
        schema = (Schema @{ close = @{ type = 'boolean' } }); run = { param($a) Get-ReviewDialogs -Close:([bool](Arg $a 'close' $false)) } }
 )
@@ -115,7 +118,7 @@ try {
             'initialize' {
                 $pv = Arg $msg.params 'protocolVersion' '2025-06-18'
                 $reply = @{ protocolVersion = $pv; capabilities = @{ tools = @{} }; serverInfo = @{ name = 'access-review'; version = $ServerVersion }
-                            instructions = 'Drives Microsoft Access over COM for visual review without using the desktop. Typical run: review_lock, open_app, error_log mark=true, open_form, capture, controls, dialogs, error_log, close_app, review_unlock. To see exactly what a PR changed on its forms: snapshot label=main on a base build and label=pr on the PR build, then compare_snapshots.' + $(if ($PaletteWarning) { " Settings problem: $PaletteWarning" }) }
+                            instructions = 'Drives Microsoft Access over COM for visual review without using the desktop. Typical run: review_lock, open_app, error_log mark=true, open_form, capture, controls, dialogs, error_log, close_app, review_unlock. To see exactly what a PR changed on its forms: snapshot label=main on a base build and label=pr on the PR build, then compare_snapshots. To hand form designs to another app or an HTML rebuild: snapshot, then export_design.' + $(if ($PaletteWarning) { " Settings problem: $PaletteWarning" }) }
             }
             'ping' { $reply = @{} }
             'tools/list' { $reply = @{ tools = (Get-ToolList) } }
