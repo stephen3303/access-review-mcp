@@ -9,6 +9,8 @@ AccessReview.ps1      the review functions (usable from plain PowerShell too)
 AccessReviewMcp.ps1   the MCP server (stdio) that exposes them as tools
 FormSnapshot.ps1      reads and compares form snapshots (no Access needed)
 FormSnapshot.Tests.ps1  checks for FormSnapshot.ps1
+FormDesign.ps1        writes form snapshots as JSON designs (no Access needed)
+FormDesign.Tests.ps1  checks for FormDesign.ps1
 ReviewSentry.ps1      optional reporting of findings to Sentry (off unless a DSN is set)
 ReviewSentry.Tests.ps1  checks for ReviewSentry.ps1 (no Access or network needed)
 manifest.json         desktop extension manifest (for the .mcpb package)
@@ -94,6 +96,7 @@ Example `env` for a config file:
 | `controls` | Each control's Left/Top/Width/Height (96 dpi px), section, caption and colours, for measuring gaps and alignment. |
 | `snapshot` | Saves the definition of each form (`SaveAsText`) under a label, in `snapshots\<label>` in the capture folder's base. Without `forms`, every form, replacing that label's earlier snapshot. Changes nothing in the front end. |
 | `compare_snapshots` | Compares two labels property by property, without Access: forms and controls added or removed, and each changed property before and after. See [Comparing two builds](#comparing-two-builds). |
+| `export_design` | Writes a label's forms as JSON designs, without Access, for rebuilding them in another app or as HTML. See [Exporting form designs](#exporting-form-designs). |
 | `dialogs` | Lists and captures open message boxes and popups; `close=true` closes them. Also lists dialogs seen during earlier calls. |
 | `error_log` | `mark=true` before testing, then `mark=false` to list new rows in an `error_log` table and new text in the file a public `LogFilePath()` function returns. Says so when the front end has neither. |
 | `compile` | Compiles and saves all modules. |
@@ -145,6 +148,48 @@ The report lists, per form, `+` for controls added and `-` for controls removed 
 - Two snapshots of the same build should compare equal. If they don't, the property that differs is one more Access rewrites on save: add it to `$SnapshotIgnored` in `FormSnapshot.ps1`.
 
 `FormSnapshot.Tests.ps1` checks the reading and comparing against a sample form: `powershell -NoProfile -File tools\review-mcp\FormSnapshot.Tests.ps1`.
+
+## Exporting form designs
+
+To hand a front end's forms to another app, or rebuild them as HTML pages, export a snapshot as JSON:
+
+1. Build the front end, `open_app`, `snapshot` with a label such as `main`. `close_app` if nothing else is needed.
+2. `export_design` with `label=main` and, for an access-modern-ui app, `theme_file` set to the full path of its build palette (`src\themes\light\modTheme.bas`).
+
+It writes `designs\<label>` in the output folder's base, next to `snapshots`:
+
+```
+<form>.json    one per form
+index.json     the forms written (with section and control counts) and the forms whose snapshot failed
+tokens.json    with theme_file: each CLR_* token of the build palette as #RRGGBB, for CSS variables
+```
+
+Each `<form>.json` (schema `access-form-design/1`):
+
+```json
+{
+  "schema": "access-form-design/1", "name": "dlgExample", "kind": "Form", "units": "px", "width": 400,
+  "properties": { "Caption": "Input", "PopUp": "NotDefault", "RecordSource": "" },
+  "events": { "OnLoad": "[Event Procedure]" },
+  "sections": [
+    { "name": "Detail", "type": "Section", "height": 180,
+      "properties": { "BackColor": { "hex": "#FEFFFF", "token": "CLR_DIALOG" } }, "events": {},
+      "controls": [
+        { "name": "btnOK", "type": "CommandButton", "left": 288, "top": 132, "width": 96, "height": 32,
+          "properties": { "Caption": "OK", "ForeColor": { "hex": "#FEFFFE", "token": "CLR_BTN_FG" } },
+          "events": { "OnClick": "[Event Procedure]" }, "children": [] } ] } ]
+}
+```
+
+- `left`, `top`, `width`, `height` and other sizes Access keeps in twips are 96 dpi px (twips / 15), the kit's `px()` units. A control's `left` and `top` are measured from its section's top-left corner, including controls on a tab page or in an option group, which are listed in that control's `children`. Sections are stacked top to bottom in the order listed.
+- Every other saved property is in `properties` under its Access name, so nothing the snapshot holds is lost. Text is unquoted, whole numbers are numbers, colours are `{ hex, token }` (`token` only with `theme_file`; the generated palettes make each build colour unique, so the token is exact) and system colours are `{ system: <number> }`.
+- Event properties (`On...`, `Before...`, `After...`) are in `events`: `[Event Procedure]` means the code behind the form handles it.
+- A control saves only what differs from the form's defaults for its type; those defaults are merged in, so each control's `properties` is complete as far as the form records it. Properties left at Access's own built-in defaults are not saved by Access and so are not listed.
+- `NotDefault` is kept as saved: the property is set to the value that is not Access's default (for a yes/no property, the opposite of the default).
+- Pictures and conditional formats are a `<binary, n lines, hash>` placeholder. The code behind the form is not included; it is in source control (`src\forms\<form>.vba` in kit apps).
+- The design is the form as the build saved it. What the form's code changes when it opens (kit forms are themed to the user's palette, resized to their content and have controls shown or hidden on load) is not in it. Map `token` to a CSS variable to get palette switching back.
+
+`FormDesign.Tests.ps1` checks the export against a sample form: `powershell -NoProfile -File FormDesign.Tests.ps1`.
 
 ## Limits
 

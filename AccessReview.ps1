@@ -18,6 +18,7 @@
 #   Save-ReviewSnapshot -Label pr
 #   Close-ReviewApp
 #   Compare-ReviewSnapshot -Before main -After pr
+#   Export-ReviewDesign -Label main -ThemeFile 'C:\Src\MyApp\src\themes\light\modTheme.bas'
 #
 # Rules it keeps: it only opens an existing file (a new file path brings back the
 # Enable Content prompt), it never sends input to the desktop, and it leaves the
@@ -35,6 +36,7 @@
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'FormSnapshot.ps1')
+. (Join-Path $PSScriptRoot 'FormDesign.ps1')
 . (Join-Path $PSScriptRoot 'ReviewSentry.ps1')
 
 if (-not ('KitReviewWin' -as [type])) {
@@ -1062,6 +1064,19 @@ function Compare-ReviewSnapshot {
         FormsUnchanged = @($cmp.Forms | Where-Object { $_.Differences -eq 0 }).Count
         Text = $shown
     }
+}
+
+# Writes a snapshot's forms as JSON designs (FormDesign.ps1) under designs\<Label> in the
+# capture folder's base, for rebuilding the forms in another app or as HTML. Access need
+# not be open. -ThemeFile is the app's build palette (modTheme.bas) so each colour also
+# names its kit token; it is only read.
+function Export-ReviewDesign {
+    param([Parameter(Mandatory)][string]$Label, [string]$ThemeFile, [string[]]$Forms)
+    $snap = Get-ReviewSnapshotDir $Label
+    if ($ThemeFile -and -not [IO.Path]::IsPathRooted($ThemeFile)) { throw "theme_file must be a full path: $ThemeFile" }
+    $out = Join-Path (Join-Path (Get-ReviewOutputBase) 'designs') $Label
+    $r = Export-FormDesignFolder -SnapshotDir $snap -OutDir $out -ThemeFile $ThemeFile -Forms $Forms
+    [pscustomobject]@{ Label = $Label; Folder = $r.Folder; Written = $r.Written; Failed = $r.Failed }
 }
 
 # Open windows of the Access instance other than its main window: message boxes and
