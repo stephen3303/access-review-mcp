@@ -11,8 +11,9 @@ $utf8 = New-Object Text.UTF8Encoding($false)
 [Console]::OutputEncoding = $utf8
 
 . (Join-Path $PSScriptRoot 'AccessReview.ps1')
+. (Join-Path $PSScriptRoot 'OneNoteReview.ps1')
 
-$ServerVersion = '0.5.0'
+$ServerVersion = '0.6.0'
 
 function Send-Message($obj) {
     [Console]::Out.WriteLine(($obj | ConvertTo-Json -Depth 20 -Compress))
@@ -34,6 +35,9 @@ function Schema([hashtable]$props, [string[]]$required = @()) {
 $str = @{ type = 'string' }
 $int = @{ type = 'integer' }
 $formProp = @{ type = 'string'; description = 'Form name, e.g. frmMain.' }
+$nbProp = @{ type = 'string'; description = 'Notebook name or ID; default every open local notebook.' }
+$metaProp = @{ type = 'string'; description = 'Name of the page Meta tag that holds the record ID, e.g. spm.key.' }
+$pageProp = @{ type = 'string'; description = 'Page ID, record ID (with meta_name) or title.' }
 
 # name, description, input schema, handler (receives the arguments object).
 $Tools = @(
@@ -83,6 +87,32 @@ $Tools = @(
        run = { param($a) $f = Arg $a 'forms'; Export-ReviewDesign -Label (Arg $a 'label') -ThemeFile (Arg $a 'theme_file') -Forms $(if ($f) { [string[]]@($f) } else { $null }) } }
     @{ name = 'dialogs'; description = 'List (and capture) open message boxes and popup windows of this Access instance, plus dialogs seen during earlier calls. close=true closes the open ones.'
        schema = (Schema @{ close = @{ type = 'boolean' } }); run = { param($a) Get-ReviewDialogs -Close:([bool](Arg $a 'close' $false)) } }
+    @{ name = 'onenote_notebooks'; description = 'List the OneNote notebooks this tool may use: open in the OneNote desktop app and stored on this PC (inside ACCESS_REVIEW_ALLOWED_FOLDERS when set). Cloud and work notebooks are never listed or read; only their count is given.'
+       schema = (Schema @{}); run = { param($a) Get-ReviewNotebooks } }
+    @{ name = 'onenote_open_notebook'; description = 'Open an existing local OneNote notebook (its folder or .onetoc2) in the OneNote desktop app, e.g. a throwaway notebook an app published into. Never creates one; refuses web paths and, when ACCESS_REVIEW_ALLOWED_FOLDERS is set, folders outside it.'
+       schema = (Schema @{ path = @{ type = 'string'; description = 'Full path of the notebook folder or .onetoc2 file.' } } @('path'))
+       run = { param($a) Open-ReviewNotebook -Path (Arg $a 'path') } }
+    @{ name = 'onenote_pages'; description = 'Sections and pages of the local notebooks (or one notebook or section), skipping the recycle bin, with each page''s ID and last change. With meta_name, each page''s record ID (that Meta tag''s value) as Key.'
+       schema = (Schema @{ notebook = $nbProp; section = @{ type = 'string'; description = 'Section name or its path as listed.' }; meta_name = $metaProp })
+       run = { param($a) Get-ReviewNotebookPages -Notebook (Arg $a 'notebook') -Section (Arg $a 'section') -MetaName (Arg $a 'meta_name') } }
+    @{ name = 'onenote_page'; description = 'Read one page (GetPageContent) as a summary: title, page Meta tags (record IDs), page colour, quick styles, and each outline with its position and size in points, its own Meta tags (spm.block) and its content as lines (indent, text, style, colours as #rrggbb, tags; tables as rows with shading; images with size). Saves the page XML in the session folder.'
+       schema = (Schema @{ page = $pageProp; notebook = $nbProp; meta_name = $metaProp } @('page'))
+       run = { param($a) Get-ReviewOneNotePage -Page (Arg $a 'page') -Notebook (Arg $a 'notebook') -MetaName (Arg $a 'meta_name') } }
+    @{ name = 'onenote_capture'; description = 'PNG of a page: opens it in a new OneNote window, keeps that window past the desktop edge (offscreen, default) or at the top left (onscreen, for a dedicated review machine), draws it with PrintWindow until two frames match, then closes that window. The user''s own OneNote windows are not moved. Returns the image and its saved path.'
+       schema = (Schema @{ page = $pageProp; notebook = $nbProp; meta_name = $metaProp
+                          label = @{ type = 'string'; pattern = '^[A-Za-z0-9][A-Za-z0-9_.-]*$'; description = 'Added to the file name, e.g. navy.' }
+                          mode = @{ type = 'string'; enum = @('offscreen', 'onscreen') }; width_px = $int; height_px = $int } @('page'))
+       run = { param($a) Save-ReviewOneNoteCapture -Page (Arg $a 'page') -Notebook (Arg $a 'notebook') -MetaName (Arg $a 'meta_name') -Label (Arg $a 'label') -Mode (Arg $a 'mode' 'offscreen') -WidthPx (Arg $a 'width_px' 1280) -HeightPx (Arg $a 'height_px' 900) }
+       image = $true }
+    @{ name = 'onenote_snapshot'; description = 'Save the XML of every page in a local notebook (or section) as a snapshot under a label, e.g. before and after a publish, replacing that label''s earlier snapshot. Pages are keyed by record ID (meta_name) when they have one, else by section and title. Reads only.'
+       schema = (Schema @{ label = @{ type = 'string'; description = 'Letters, digits, ., _ or -.' }; notebook = $nbProp; section = $str; meta_name = $metaProp } @('label'))
+       run = { param($a) Save-ReviewOneNoteSnapshot -Label (Arg $a 'label') -Notebook (Arg $a 'notebook') -Section (Arg $a 'section') -MetaName (Arg $a 'meta_name') } }
+    @{ name = 'onenote_compare'; description = 'Compare two OneNote snapshots (OneNote need not be open): pages added or removed, and per page title, Meta tag (record ID) and page colour changes, quick style changes, outlines added, removed, moved or resized (matched by their Meta tag, else by order), and text lines added and removed with their styles and colours. Saves the full report as a text file.'
+       schema = (Schema @{ before = $str; after = $str } @('before', 'after'))
+       run = { param($a) Compare-ReviewOneNoteSnapshot -Before (Arg $a 'before') -After (Arg $a 'after') } }
+    @{ name = 'onenote_check_ids'; description = 'Check the record IDs on pages: which pages lack the meta_name Meta tag, which IDs are on more than one page, and, given expected IDs (e.g. command, people, program:12), which are missing and which are not expected. Ok is true when there are no duplicates, none missing and none unexpected.'
+       schema = (Schema @{ notebook = $nbProp; section = $str; meta_name = @{ type = 'string'; description = 'Default spm.key.' }; expected = @{ type = 'array'; items = $str } })
+       run = { param($a) $e = Arg $a 'expected'; Test-ReviewOneNoteRecordIds -Notebook (Arg $a 'notebook') -Section (Arg $a 'section') -MetaName (Arg $a 'meta_name' 'spm.key') -Expected $(if ($e) { [string[]]@($e) } else { $null }) } }
 )
 
 function Invoke-Tool($name, $arguments) {
@@ -118,7 +148,7 @@ try {
             'initialize' {
                 $pv = Arg $msg.params 'protocolVersion' '2025-06-18'
                 $reply = @{ protocolVersion = $pv; capabilities = @{ tools = @{} }; serverInfo = @{ name = 'access-review'; version = $ServerVersion }
-                            instructions = 'Drives Microsoft Access over COM for visual review without using the desktop. Typical run: review_lock, open_app, error_log mark=true, open_form, capture, controls, dialogs, error_log, close_app, review_unlock. To see exactly what a PR changed on its forms: snapshot label=main on a base build and label=pr on the PR build, then compare_snapshots. To hand form designs to another app or an HTML rebuild: snapshot, then export_design.' + $(if ($PaletteWarning) { " Settings problem: $PaletteWarning" }) }
+                            instructions = 'Drives Microsoft Access over COM for visual review without using the desktop. Typical run: review_lock, open_app, error_log mark=true, open_form, capture, controls, dialogs, error_log, close_app, review_unlock. To see exactly what a PR changed on its forms: snapshot label=main on a base build and label=pr on the PR build, then compare_snapshots. To hand form designs to another app or an HTML rebuild: snapshot, then export_design. OneNote (local notebooks only, OneNote desktop): onenote_open_notebook, onenote_pages, onenote_page, onenote_capture, onenote_check_ids; to see what a publish changed, onenote_snapshot before and after, then onenote_compare.' + $(if ($PaletteWarning) { " Settings problem: $PaletteWarning" }) }
             }
             'ping' { $reply = @{} }
             'tools/list' { $reply = @{ tools = (Get-ToolList) } }
@@ -135,5 +165,6 @@ try {
 } finally {
     # The client went away: never leave a hidden Access instance holding the file open.
     try { $null = Close-ReviewApp } catch {}
+    try { Close-ReviewOneNote } catch {}
     Log 'stopped'
 }

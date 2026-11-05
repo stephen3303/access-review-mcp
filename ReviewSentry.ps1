@@ -16,7 +16,7 @@
 #   ACCESS_REVIEW_SENTRY_DSN          the project's DSN; unset means reporting is off
 #   ACCESS_REVIEW_SENTRY_ENVIRONMENT  environment name on each event (default review)
 
-$script:SentryVersion = '0.4.2'   # matches the server version
+$script:SentryVersion = '0.6.0'   # matches the server version
 $script:SentryDown = $false
 
 # The DSN split into what a send needs, or $null when reporting is off or the DSN is

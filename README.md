@@ -2,7 +2,7 @@
 
 An MCP server that lets Claude review the forms of a Microsoft Access front end without using your screen. It starts its own Access instance over COM, keeps every Access window just past the edge of the desktop, and captures forms with `PrintWindow`, which asks Access to draw a window into a bitmap. Nothing comes to the front, nothing takes focus, and no mouse or keyboard input is sent, so you can keep working on the same PC while a review runs.
 
-It was built for visual review of apps made with [access-modern-ui](https://github.com/stephen3303/access-modern-ui), but the core tools work with any Access front end.
+It was built for visual review of apps made with [access-modern-ui](https://github.com/stephen3303/access-modern-ui), but the core tools work with any Access front end. It also reads, compares and captures pages of local OneNote notebooks, for apps that publish pages to OneNote; see [OneNote pages](#onenote-pages).
 
 ```
 AccessReview.ps1      the review functions (usable from plain PowerShell too)
@@ -13,6 +13,9 @@ FormDesign.ps1        writes form snapshots as JSON designs (no Access needed)
 FormDesign.Tests.ps1  checks for FormDesign.ps1
 ReviewSentry.ps1      optional reporting of findings to Sentry (off unless a DSN is set)
 ReviewSentry.Tests.ps1  checks for ReviewSentry.ps1 (no Access or network needed)
+OneNoteReview.ps1     the OneNote tools (OneNote desktop over COM)
+OneNotePage.ps1       reads and compares OneNote page XML (no OneNote needed)
+OneNotePage.Tests.ps1   checks for OneNotePage.ps1
 manifest.json         desktop extension manifest (for the .mcpb package)
 ```
 
@@ -103,6 +106,11 @@ Example `env` for a config file:
 | `run` | Runs a public procedure with `Application.Run`, for example a sign-in. Whole numbers are passed as Long (Double when too large) and output arguments come back. |
 | `set_palette` | Runs the palette procedure, then reopens the open forms at their last size (a form left open keeps part of the old drawing). A form with a public `Reopen` method reopens itself on its current page (read from its `PageKey`), so a signed-in user stays signed in; if that fails the call returns an error and never closes the form. Other forms are closed and reopened with their OpenArgs. |
 | `review_lock` / `review_unlock` | Takes and releases the shared lock files, re-reading after 3 s to catch a race. Releases only its own. |
+| `onenote_notebooks` / `onenote_open_notebook` | Lists the local notebooks open in OneNote that the tools may use; opens an existing local notebook. See [OneNote pages](#onenote-pages). |
+| `onenote_pages` / `onenote_page` | Lists sections and pages (with each page's record ID given `meta_name`); reads one page as a summary and saves its XML. |
+| `onenote_capture` | PNG of a page, drawn in a new OneNote window kept off screen, then closed. |
+| `onenote_snapshot` / `onenote_compare` | Saves every page's XML under a label; compares two labels page by page. |
+| `onenote_check_ids` | Pages without a record ID, IDs on more than one page, and expected IDs missing or unexpected. |
 
 Every Access call runs under a guard. A window that appears during a call is parked off screen, captured and described. VBA and Office message boxes are closed so the call returns. A Yes/No box ignores Close, so the guard presses No, or the default button when there is no No. Another window (a dialog form opened modally) is closed if it is still blocking the call after 4 s, except while `open_app` starts the front end, so a splash or sign-in form stays open. A call that runs past its timeout ends Access. Each tool's result lists what the guard saw.
 
@@ -191,6 +199,28 @@ Each `<form>.json` (schema `access-form-design/1`):
 
 `FormDesign.Tests.ps1` checks the export against a sample form: `powershell -NoProfile -File FormDesign.Tests.ps1`.
 
+## OneNote pages
+
+For apps that publish pages into OneNote (SPM's Publish to OneNote writes a leadership binder with a hidden `spm.key` record ID on each page and `spm.block` on the outline it owns). The tools use the OneNote desktop app's own COM API (`OneNote.Application`): no app registration, no Microsoft Graph, no sign-in, and nothing leaves the PC. They never edit a page.
+
+**Boundary.** Only notebooks stored on this PC are used. A notebook whose path is a web address (OneDrive, SharePoint, a work tenant) is never listed, read or captured; `onenote_notebooks` gives only how many such notebooks are open. When **Front-end folder** / `ACCESS_REVIEW_ALLOWED_FOLDERS` is set, a local notebook must be inside it too. Review with a throwaway local notebook.
+
+**Needs** the OneNote desktop app (Microsoft 365 or OneNote 2016), run at least once by the same Windows user. OneNote for Windows 10 has no COM API. OneNote is one process per user, so the tools attach to the one already running (or start it) and never quit it.
+
+| Tool | Details |
+|---|---|
+| `onenote_open_notebook` | `path`: the notebook's folder or `.onetoc2`, full path. Opens it (never creates one). |
+| `onenote_pages` | `notebook`, `section` (name or the listed path) and `meta_name` are optional. With `meta_name` each page's record ID comes back as `Key`. |
+| `onenote_page` | `page`: page ID, record ID (with `meta_name`) or title. Returns the title, page Meta tags, page colour, quick styles (font, size, colour), and each outline with its position and size in points, its own Meta tags and its lines. A line is a paragraph with its indent, quick style, colours (`#rrggbb`) and tags, a table row with its cells and shading, or an image with its size. Saves the page XML in an `onenote-<time>` folder. |
+| `onenote_capture` | Opens the page in a new OneNote window, parks that window past the desktop edge (`mode` `offscreen`, default) or at the top left (`onscreen`), sizes it (`width_px` x `height_px`, default 1280x900), captures until two frames match, then closes that window. The user's own OneNote windows keep their page. |
+| `onenote_snapshot` | Saves each page's XML under `onenote-snapshots\<label>` with an `index.json`. Pages are keyed by record ID when they have one, else by section and title. |
+| `onenote_compare` | Pages added and removed, and for each page: title, Meta tag and page colour changes, quick style changes, outlines added, removed, moved or resized (matched by their Meta tag, else by order), and lines added and removed. Saves the report as `onenote-snapshots\compare <before> to <after>.txt`. |
+| `onenote_check_ids` | `meta_name` defaults to `spm.key`. Lists pages without it and IDs on more than one page; with `expected` (e.g. `command`, `people`, `program:12`) also IDs missing and IDs not expected. `Ok` is true when nothing is wrong. |
+
+A typical check of a publish: open the throwaway notebook, `onenote_snapshot label=before`, publish from the app, `onenote_snapshot label=after`, `onenote_compare`, `onenote_check_ids` with the expected IDs, then `onenote_capture` the pages that changed. Publish twice and compare again: an update in place shows changed lines only, never a second page or a second `spm.block` outline.
+
+Capture limits: OneNote may come to the front for a moment when it opens the page window. If a capture comes back one solid colour, OneNote did not draw while off screen on that machine; use `mode onscreen` on a dedicated review machine.
+
 ## Limits
 
 - Hover effects, cursor changes and flicker during a real click can't be seen without a real pointer. Check those by hand.
@@ -212,6 +242,13 @@ Get-ReviewErrorLog
 Save-ReviewSnapshot -Label pr
 Close-ReviewApp
 Compare-ReviewSnapshot -Before main -After pr
+
+. .\OneNoteReview.ps1
+Open-ReviewNotebook -Path 'C:\Review\Notebooks\Binder'
+Save-ReviewOneNoteSnapshot -Label before -MetaName spm.key
+Get-ReviewOneNotePage -Page command -MetaName spm.key
+Save-ReviewOneNoteCapture -Page command -MetaName spm.key -Label navy
+Test-ReviewOneNoteRecordIds -Expected command, people
 ```
 
 ## Build the package
