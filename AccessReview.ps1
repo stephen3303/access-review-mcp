@@ -299,11 +299,16 @@ public class KitReviewKeeper {
 // timeout, Access is ended.
 public class KitReviewGuard {
     readonly uint pid; readonly string dir; readonly bool park; readonly int timeoutMs, modalMs;
+    string app = "Access";   // the program named in notes (the Office tools watch Excel, Word and others too)
     readonly HashSet<IntPtr> known = new HashSet<IntPtr>();
     readonly Dictionary<IntPtr, long> pending = new Dictionary<IntPtr, long>();
     public readonly List<string> Events = new List<string>();
     public bool Killed;
     volatile bool stop; Thread thread; int n;
+
+    public KitReviewGuard(uint pid, string dir, bool park, int timeoutSec, int modalSec, string app) : this(pid, dir, park, timeoutSec, modalSec) {
+        if (!string.IsNullOrEmpty(app)) this.app = app;
+    }
 
     public KitReviewGuard(uint pid, string dir, bool park, int timeoutSec, int modalSec) {
         this.pid = pid; this.dir = dir; this.park = park; timeoutMs = timeoutSec * 1000; modalMs = modalSec * 1000;
@@ -319,7 +324,7 @@ public class KitReviewGuard {
         while (!stop) {
             Process proc;
             try { proc = Process.GetProcessById((int)pid); } catch { return; }
-            if (proc.HasExited) { Note("[exited] Access closed during the call"); return; }
+            if (proc.HasExited) { Note("[exited] " + app + " closed during the call"); return; }
             foreach (var h in KitReviewWin.TopWindows(pid)) {
                 if (!known.Add(h)) continue;
                 if (park) KitReviewWin.Park(h);
@@ -342,7 +347,7 @@ public class KitReviewGuard {
                 }
             }
             if (timeoutMs > 0 && sw.ElapsedMilliseconds > timeoutMs) {
-                Note("[timeout] Access still busy after " + (timeoutMs / 1000) + "s; ended it");
+                Note("[timeout] " + app + " still busy after " + (timeoutMs / 1000) + "s; ended it");
                 try { proc.Kill(); Killed = true; } catch { }
                 return;
             }
