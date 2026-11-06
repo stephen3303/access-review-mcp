@@ -236,6 +236,13 @@ function ConvertFrom-OfficeComValue($Value, [scriptblock]$OnObject, [int]$MaxCel
     [string]$Value
 }
 
+# A range read always answers as rows: one cell comes back from COM as a scalar, so it is
+# wrapped as a 1x1 grid and callers never branch on the range's size.
+function ConvertTo-OfficeGrid($Converted) {
+    if ($null -ne $Converted -and $Converted.PSObject.Properties['Rows']) { return $Converted }
+    [pscustomobject]@{ Rows = @(, @(, $Converted)); RowCount = 1; ColumnCount = 1; Truncated = $false }
+}
+
 # One audit line: what was called, never the text it was given beyond a short preview.
 function Format-OfficeAudit {
     param([string]$Tool, [string]$App, [string]$Target, [string]$Path, $Arguments, [bool]$Ok, [string]$Failure)

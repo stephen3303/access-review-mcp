@@ -890,8 +890,8 @@ function Invoke-ExcelRange {
             [void][System.__ComObject].InvokeMember($prop, [Reflection.BindingFlags]::SetProperty, $null, $rng, @(, (Unwrap $v)))
         }
         $out = [ordered]@{ Sheet = [string]$ws.Name; Address = [string]$rng.Address($false, $false); Cells = $cells
-                           Values = (ConvertFrom-OfficeComValue $rng.Value2 $null 10000) }
-        if ($IncludeFormulas) { $out.Formulas = ConvertFrom-OfficeComValue $rng.Formula $null 10000 }
+                           Values = (ConvertTo-OfficeGrid (ConvertFrom-OfficeComValue $rng.Value2 $null 10000)) }
+        if ($IncludeFormulas) { $out.Formulas = ConvertTo-OfficeGrid (ConvertFrom-OfficeComValue $rng.Formula $null 10000) }
         [pscustomobject]$out
     }
     $r.Value | Add-Member -NotePropertyName Dialogs -NotePropertyValue $r.Dialogs -PassThru

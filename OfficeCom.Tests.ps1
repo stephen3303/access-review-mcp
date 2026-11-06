@@ -116,6 +116,13 @@ Check 'audit line is one JSON object' ($o.tool -eq 'office_invoke' -and $o.app -
 Check 'audit arguments preview cut to 300' ($o.args.Length -le 303)
 
 # --- the C# type-information helper compiles (PowerShell 5.1 builds it with the C# 5 compiler) ---
+$g1 = ConvertTo-OfficeGrid 7
+Check 'one cell reads as a 1x1 grid' ($g1.Rows[0][0] -eq 7 -and $g1.RowCount -eq 1 -and $g1.ColumnCount -eq 1)
+Check 'an empty cell reads as a 1x1 grid of null' ($null -eq (ConvertTo-OfficeGrid $null).Rows[0][0])
+$grid = New-Object 'object[,]' 1, 2; $grid[0, 0] = 1; $grid[0, 1] = 2
+$g2 = ConvertTo-OfficeGrid (ConvertFrom-OfficeComValue $grid)
+Check 'a grid passes through unchanged' ($g2.Rows[0][1] -eq 2 -and $g2.ColumnCount -eq 2)
+
 $compiled = $false
 try {
     $src = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'OfficeReview.ps1') -Raw
