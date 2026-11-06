@@ -2,7 +2,7 @@
 
 An MCP server that lets Claude review the forms of a Microsoft Access front end without using your screen. It starts its own Access instance over COM, keeps every Access window just past the edge of the desktop, and captures forms with `PrintWindow`, which asks Access to draw a window into a bitmap. Nothing comes to the front, nothing takes focus, and no mouse or keyboard input is sent, so you can keep working on the same PC while a review runs.
 
-It was built for visual review of apps made with [access-modern-ui](https://github.com/stephen3303/access-modern-ui), but the core tools work with any Access front end. It also reads, compares and captures pages of local OneNote notebooks, for apps that publish pages to OneNote; see [OneNote pages](#onenote-pages).
+It was built for visual review of apps made with [access-modern-ui](https://github.com/stephen3303/access-modern-ui), but the core tools work with any Access front end. It also reads, compares and captures pages of local OneNote notebooks, for apps that publish pages to OneNote; see [OneNote pages](#onenote-pages). And it drives the other Office apps (Excel, Word, PowerPoint, Visio, Project, Publisher, and Outlook when you enable it) through their COM object models, with typed tools for common jobs and a generic tool that reaches any method or property; see [Office apps](#office-apps).
 
 ```
 AccessReview.ps1      the review functions (usable from plain PowerShell too)
@@ -16,6 +16,10 @@ ReviewSentry.Tests.ps1  checks for ReviewSentry.ps1 (no Access or network needed
 OneNoteReview.ps1     the OneNote tools (OneNote desktop over COM)
 OneNotePage.ps1       reads and compares OneNote page XML (no OneNote needed)
 OneNotePage.Tests.ps1   checks for OneNotePage.ps1
+OfficeReview.ps1      the Office tools (Excel, Word, PowerPoint, Outlook... over COM)
+OfficeCom.ps1         member paths, safety rules and value conversion (no Office needed)
+OfficeCom.Tests.ps1   checks for OfficeCom.ps1
+OfficeSmoke.ps1       end-to-end check of the Office tools on a review machine with Office
 manifest.json         desktop extension manifest (for the .mcpb package)
 ```
 
@@ -69,11 +73,13 @@ All optional. In the extension they are fields on its settings page; with a conf
 | Setting | Environment variable | Default | What it does |
 |---|---|---|---|
 | Capture folder | `ACCESS_REVIEW_OUTPUT` | `%LOCALAPPDATA%\AccessReview` | Full path. Where PNGs are saved, in a new time-stamped folder per session. `open_app` can also take `output_dir`. |
-| Front-end folder | `ACCESS_REVIEW_ALLOWED_FOLDERS` | none (extension: required) | Folders `open_app` may open files from, including subfolders, separated by `;`. Full paths. When unset, any existing file can be opened. |
+| Front-end folder | `ACCESS_REVIEW_ALLOWED_FOLDERS` | none (extension: required) | Folders `open_app` and `office_open` may open files from, including subfolders, separated by `;`. Full paths. When unset, `open_app` can open any existing file, and the Office tools use only the capture folder. |
 | Shared lock files | `ACCESS_REVIEW_LOCKS` | none | Full paths of lock files, separated by `;`, for a PC several reviewers take turns on. `review_lock` takes all or none; with none configured it does nothing. |
 | Palettes | `ACCESS_REVIEW_PALETTES` | `Navy=1;Midnight=2;Teal Navy=6` | Palettes `set_palette` offers, as `name=number`. The number is passed to the palette procedure. The first one is the default: `close_app` switches back to it. A malformed value is ignored with a warning (in the server log, its instructions and each `set_palette` result) and the defaults are used. |
 | Palette procedure | `ACCESS_REVIEW_PALETTE_PROCEDURE` | `SetPalette` | Public VBA `Sub Name(ByVal i As Long)` in your front end that switches palettes. |
 | Sentry DSN | `ACCESS_REVIEW_SENTRY_DSN` | none (off) | Reports findings to a Sentry project; see [Reporting to Sentry](#reporting-to-sentry). |
+| Office apps | `ACCESS_REVIEW_OFFICE_APPS` | `excel;word;powerpoint;visio;project;publisher;access` | Apps the `office_*` tools may drive. Outlook is left out: add `outlook` only if Claude may read this PC's Outlook mail (read only). |
+| Attach to running Office apps | `ACCESS_REVIEW_OFFICE_ATTACH` | none | PowerPoint, Outlook, Project and Publisher keep one instance per user. While you have one open, `office_start` refuses rather than take it over, unless it is listed here. An attached app is never quit, captured or given documents. |
 | (config file only) | `ACCESS_REVIEW_SENTRY_ENVIRONMENT` | `review` | Environment name on each Sentry report, for example the machine's role. |
 
 Example `env` for a config file:
@@ -111,6 +117,12 @@ Example `env` for a config file:
 | `onenote_capture` | PNG of a page, drawn in a new OneNote window kept off screen, then closed. |
 | `onenote_snapshot` / `onenote_compare` | Saves every page's XML under a label; compares two labels page by page. |
 | `onenote_check_ids` | Pages without a record ID, IDs on more than one page, and expected IDs missing or unexpected. |
+| `office_apps` / `office_start` / `office_quit` | Office apps installed and enabled here; start one in its own off-screen instance; close its documents without saving and quit it. See [Office apps](#office-apps). |
+| `office_open` / `office_new` / `office_close` | Open an existing Excel, Word, PowerPoint or Visio file from the allowed folder (read-only, macros off by default); make a blank one; close without saving. |
+| `office_save_as` / `office_export_pdf` / `office_capture` | Save a copy in the allowed or capture folder; write a PDF; PNG of an app or document window. |
+| `office_invoke` / `office_members` / `office_release` | Get, set or call any member path of an object model (objects come back as handles); list what an object offers from its type library; forget handles. |
+| `office_run_macro` | Runs a macro in a document opened with `enable_macros=true`. |
+| `excel_range` / `word_text` / `powerpoint_slides` / `outlook_items` | Read or write cells; a document's paragraphs and styles; slides with shapes, text and tags; mail items in a folder (read only). |
 
 Every Access call runs under a guard. A window that appears during a call is parked off screen, captured and described. VBA and Office message boxes are closed so the call returns. A Yes/No box ignores Close, so the guard presses No, or the default button when there is no No. Another window (a dialog form opened modally) is closed if it is still blocking the call after 4 s, except while `open_app` starts the front end, so a splash or sign-in form stays open. A call that runs past its timeout ends Access. Each tool's result lists what the guard saw.
 
@@ -221,6 +233,46 @@ A typical check of a publish: open the throwaway notebook, `onenote_snapshot lab
 
 Capture limits: OneNote may come to the front for a moment when it opens the page window. If a capture comes back one solid colour, OneNote did not draw while off screen on that machine; use `mode onscreen` on a dedicated review machine.
 
+## Office apps
+
+The `office_*` tools drive the other Office apps through the same COM object models VBA uses. They cover the whole object model without a tool per method:
+
+- **`office_invoke`** walks a VBA-like member path from a target and reads the end, sets it (`value`) or calls it. A target is an app you started (`excel`, `word`, `powerpoint`, `outlook`, `visio`, `project`, `publisher`), `access` for the instance `open_app` started, or a handle. Arguments are literals: `'text'` or `"text"` (double a quote to include one), numbers, `true`, `false`, `null`, `missing` or an empty slot, and `@h3` for a handle; `Name:=value` passes a named argument. Extra JSON arguments (`args`) go after the last member's own, for blocks of cells (arrays of rows) or `{"handle": "h3"}`. Any object that comes back is kept as a handle (`h1`, `h2`...) to use as a later target or argument; `fields` reads members of it and `enumerate` lists a collection's items.
+- **`office_members`** reads an object's type library: every method and property with its parameters (optional ones end in `?`), its description, and whether `office_invoke` refuses it. Use it to find the member you need instead of guessing.
+- **Typed helpers** for the common jobs: `office_open`, `office_new`, `office_save_as`, `office_export_pdf`, `office_capture`, `office_run_macro`, `excel_range`, `word_text`, `powerpoint_slides`, `outlook_items`.
+
+Examples of `office_invoke` paths:
+
+| Target | Path | Effect |
+|---|---|---|
+| a workbook handle | `Worksheets('Summary').Range("A1:C4").Value2` | Reads the cells as rows. |
+| a workbook handle | `Worksheets(1).Range('C1').Formula` with `value` `=SUM(A1:B1)` | Writes a formula. |
+| a document handle | `SaveAs2(FileName:='C:\Review\out.docx', FileFormat:=16)` | Named arguments. |
+| a presentation handle | `Slides(1).Shapes('Title 1').TextFrame.TextRange.Text` | Reads a title. |
+| a slide handle | `Shapes.AddTextbox(1, 40, 40, 400, 60)` | Returns the new shape as a handle. |
+| `excel` | `Workbooks` with `enumerate=true`, `fields` `["Name", "FullName"]` | Lists open workbooks. |
+
+**Guards.** Each call keeps these rules (the lists are in `OfficeCom.ps1`):
+
+- Only the apps in **Office apps** / `ACCESS_REVIEW_OFFICE_APPS`. Outlook is off unless listed, and its items are read only: `Delete`, `Move`, `Reply`, `Forward` and the like are refused, as is `Send` everywhere. OneNote stays with the `onenote_*` tools, which keep to local notebooks.
+- `office_start` starts the app's own instance, with alerts off and macros disabled for every file it opens (`AutomationSecurity` force-disable). It never takes over a single-instance app the user has open (see **Attach to running Office apps**). In off-screen mode every window of that instance is kept past the desktop edge.
+- Files open only from the allowed folder (and the capture folder), never from the internet (Mark of the Web), through no junction or symbolic link, and read-only unless `read_only=false`. Macros run only in a file opened with `enable_macros=true`, through `office_run_macro`.
+- Members that run code the caller supplies or reach outside the documents are refused: formula and macro engines (`ExecuteExcel4Macro`, `Evaluate`, `Eval`, `Run`, `WordBasic`), DDE, `Shell`, `SendKeys`, `OnTime`/`OnKey`, the VBA editor (`VBE`, `VBProject`), add-ins, `ExecuteMso`, hyperlinks (`Follow`, `FollowHyperlink`), mail (`Send`, `SendMail`, routing), printing (`PrintOut`; use `office_export_pdf`), `Quit` (use `office_quit`) and `AutomationSecurity`. Through `access`, `RunSQL`, `RunCommand` and opening or closing databases are refused too (the Access tools do those).
+- Every text argument or value that looks like a path or address is checked: a full path must be inside the allowed or capture folder and contain no `..`, and web, `file:` and other addresses are refused. A method that reads or writes files (`SaveAs`, `Open`, `ExportAsFixedFormat`, `InsertFile`, `AddPicture`...) must be given a full path, not a bare name that would land in the app's default folder.
+- Formulas that reach code, other programs or the web are refused: DDE links (`=cmd|...`), `CALL`, `REGISTER`, `EXEC`, `RTD`, `WEBSERVICE`, `FILTERXML`, `HYPERLINK`.
+- Every call goes under the same guard as Access calls: message boxes are captured and closed (No when there is one), and a call that runs past its timeout ends the app, never one the tools attached to.
+- Every `office_*`, `excel_*`, `word_*`, `powerpoint_*` and `outlook_*` call is appended to `office-audit.log` in the capture folder's base: time, tool, app, target, path, a 300-character preview of the arguments, and whether it succeeded or why not.
+
+The generic tool is still a way to change documents: open copies in the allowed folder, not originals.
+
+**Needs** desktop Office (Microsoft 365 or 2016 and later) on the same PC. `office_apps` says which apps are installed. Visio, Project and Publisher are supported through `office_invoke`; `office_open` handles Excel, Word, PowerPoint and Visio files. `outlook_items` needs an Outlook profile.
+
+**Check it on a review machine** (it starts Excel, Word and, when installed, PowerPoint; never run it on a PC someone is using):
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File OfficeSmoke.ps1
+```
+
 ## Limits
 
 - Hover effects, cursor changes and flicker during a real click can't be seen without a real pointer. Check those by hand.
@@ -249,6 +301,14 @@ Save-ReviewOneNoteSnapshot -Label before -MetaName spm.key
 Get-ReviewOneNotePage -Page command -MetaName spm.key
 Save-ReviewOneNoteCapture -Page command -MetaName spm.key -Label navy
 Test-ReviewOneNoteRecordIds -Expected command, people
+
+. .\OfficeReview.ps1
+Start-OfficeApp excel
+$wb = Open-OfficeDocument excel 'C:\Review\Budget.xlsx'
+Invoke-ExcelRange -Handle $wb.Handle -Range 'A1:D10'
+Invoke-OfficeMember -Target $wb.Handle -Path "Worksheets(1).Name"
+Get-OfficeMembers -Target $wb.Handle -Filter 'Export*'
+Stop-OfficeApp excel
 ```
 
 ## Build the package
