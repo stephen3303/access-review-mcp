@@ -36,7 +36,9 @@ function Rpc([string]$method, $params) {
     # Responses are matched by id; any other line on stdout is a server bug (stdout is
     # only for JSON-RPC), so it is reported as a failure.
     while ($true) {
-        $line = $server.StandardOutput.ReadLine()
+        $read = $server.StandardOutput.ReadLineAsync()
+        if (-not $read.Wait(180000)) { throw "No reply to $method within 180 s. Server log so far is in its stderr; process alive: $(-not $server.HasExited)." }
+        $line = $read.Result
         if ($null -eq $line) { throw "Server stopped. Its log: $($errTask.Result)" }
         $msg = $null; try { $msg = $line | ConvertFrom-Json } catch {}
         if ($msg -and $msg.PSObject.Properties['id'] -and $msg.id -eq $script:id) { return $msg }
@@ -68,6 +70,7 @@ try {
     if ($has.excel) {
         $s = Tool office_start @{ app = 'excel' }
         Check 'Excel starts in its own instance' ($s.Ok -and $s.Data.StartedByTool) $s.Text
+        Check 'Excel macros forced off (AutomationSecurity 3)' ($s.Data.MacrosForcedOff -eq $true) $s.Text
         $wb = (Tool office_new @{ app = 'excel' }).Data.Handle
         Check 'new workbook handle' ($wb -match '^h\d+$')
         $w = Tool excel_range @{ document = $wb; range = 'A1:B2'; values = @(@(1, 2), @('x', $true)) }
@@ -118,6 +121,7 @@ try {
     if ($has.word) {
         $s = Tool office_start @{ app = 'word' }
         Check 'Word starts' ($s.Ok -and $s.Data.StartedByTool) $s.Text
+        Check 'Word macros forced off' ($s.Data.MacrosForcedOff -eq $true) $s.Text
         $d = (Tool office_new @{ app = 'word' }).Data.Handle
         $t = Tool office_invoke @{ target = $d; path = 'Content.Text'; value = "Review heading`rFirst paragraph." }
         Check 'Word text set' $t.Ok $t.Text

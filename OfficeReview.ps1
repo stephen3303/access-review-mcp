@@ -271,11 +271,11 @@ function Unwrap($v) {
 }
 
 function Set-OfficeProp($obj, [string]$Name, $Value) {
-    try { [void][System.__ComObject].InvokeMember($Name, [Reflection.BindingFlags]::SetProperty, $null, $obj, @(, (Unwrap $Value))); $true } catch { $false }
+    try { [void](Invoke-OfficeDispatch $obj $Name ([Reflection.BindingFlags]::SetProperty) @(, (Unwrap $Value)) $null); $true } catch { $false }
 }
 
 function Get-OfficeProp($obj, [string]$Name) {
-    try { [System.__ComObject].InvokeMember($Name, [Reflection.BindingFlags]::GetProperty, $null, $obj, $null) } catch { $null }
+    try { Invoke-OfficeDispatch $obj $Name ([Reflection.BindingFlags]::GetProperty) @() $null } catch { $null }
 }
 
 # The innermost error message, with its HRESULT.
@@ -361,9 +361,11 @@ function Start-OfficeApp {
         if ($Mode -eq 'onscreen' -and $procId) { foreach ($h in [KitReviewWin]::TopWindows([uint32]$procId)) { [void][KitReviewWin]::Show($h, 0, 0) } }
         $null = Set-OfficeProp $com 'UserControl' $false
     }
+    $sec = Get-OfficeProp $com 'AutomationSecurity'
     $s = [pscustomobject]@{
         App = $App; Label = $def.Label; Com = $com; Pid = $procId; Process = $proc; Started = $started; Mode = $Mode
         Keeper = $keeper; Version = [string](Get-OfficeProp $com 'Version'); Dialogs = @()
+        MacrosForcedOff = $(if ($null -ne $sec) { [int]$sec -eq 3 } else { $null })
     }
     $script:OfficeSessions[$App] = $s
     Get-OfficeSessionInfo $s
@@ -371,7 +373,7 @@ function Start-OfficeApp {
 
 function Get-OfficeSessionInfo($s) {
     [pscustomobject][ordered]@{
-        App = $s.App; Version = $s.Version; Pid = $s.Pid; Mode = $s.Mode; StartedByTool = $s.Started
+        App = $s.App; Version = $s.Version; Pid = $s.Pid; Mode = $s.Mode; StartedByTool = $s.Started; MacrosForcedOff = $s.MacrosForcedOff
         Documents = @($script:OfficeHandles.GetEnumerator() | Where-Object { $_.Value.App -eq $s.App -and $_.Value.Doc } | ForEach-Object { [pscustomobject]@{ Handle = $_.Key; Name = $_.Value.Name; Path = $_.Value.Path; MacrosEnabled = $_.Value.Macros } })
         Output = (Get-OfficeOut)
     }
@@ -458,7 +460,9 @@ function Resolve-OfficeTarget([string]$Target) {
 }
 
 function ConvertTo-OfficeResult($Value, [string]$App, [int]$MaxCells = 10000) {
-    $on = { param($o) $id = Add-OfficeHandle $o $App; [pscustomobject]@{ Handle = $id; Type = $script:OfficeHandles[$id].Type } }.GetNewClosure()
+    # No GetNewClosure: a closure runs in a module of its own, where $script: is not this
+    # script's scope. Called from ConvertFrom-OfficeComValue, the block still sees $App.
+    $on = { param($o) $id = Add-OfficeHandle $o $App; [pscustomobject]@{ Handle = $id; Type = (Get-OfficeHandle $id).Type } }
     ConvertFrom-OfficeComValue $Value $on $MaxCells
 }
 
@@ -478,10 +482,51 @@ function Resolve-OfficeArgs([object[]]$Values) {
 
 $script:FlagGet = [Reflection.BindingFlags]::InvokeMethod -bor [Reflection.BindingFlags]::GetProperty
 
+# One IDispatch call. Without named arguments it goes through PowerShell's own COM
+# adapter, which reads the type library and calls each member the way it is declared
+# (method, property, or property with parameters such as Range("A1")); Office apps
+# refuse some calls made with the combined get-or-call flags that reflection sends.
+# Objects the adapter can't describe (Access forms) and calls with named arguments go
+# through KitOfficeCom.Invoke (Type.InvokeMember).
 function Invoke-OfficeDispatch($Obj, [string]$Name, [Reflection.BindingFlags]$Flags, [object[]]$Argv, [string[]]$Names) {
     $named = [string[]]@(); if ($Names) { $named = [string[]]@($Names | Where-Object { $_ }) }
     if ($null -eq $Argv) { $Argv = @() }
-    [KitOfficeCom]::Invoke($Obj, $Name, [int]$Flags, $Argv, $named)
+    $o = Unwrap $Obj
+    $isSet = [bool]($Flags -band [Reflection.BindingFlags]::SetProperty)
+    if (-not $named.Count -and $o -is [__ComObject]) {
+        $m = $null
+        try { $m = @($o.PSObject.Members.Match($Name) | Where-Object { $_.MemberType -in 'Method', 'ParameterizedProperty', 'Property' }) | Select-Object -First 1 } catch {}
+        if ($m) {
+            $plain = New-Object object[] $Argv.Count
+            for ($k = 0; $k -lt $Argv.Count; $k++) { $plain[$k] = Unwrap $Argv[$k] }
+            switch ($m.MemberType) {
+                'Method' {
+                    if ($isSet) { break }
+                    return $m.Invoke($plain)
+                }
+                'ParameterizedProperty' {
+                    if ($isSet) {
+                        $idx = New-Object object[] ($plain.Count - 1)
+                        for ($k = 0; $k -lt $idx.Count; $k++) { $idx[$k] = $plain[$k] }
+                        $m.InvokeSet($plain[$plain.Count - 1], $idx); return
+                    }
+                    return $m.Invoke($plain)
+                }
+                'Property' {
+                    if ($isSet -and $plain.Count -eq 1) { $m.Value = $plain[0]; return }
+                    if (-not $isSet -and -not $plain.Count) { return $m.Value }
+                    # A property given arguments, as VBA reads it: the arguments go to the
+                    # value's default member, Item (Worksheets(1), Cells(2, 3)).
+                    $inner = Unwrap $m.Value
+                    if ($inner -is [__ComObject] -and @($inner.PSObject.Members.Match('Item')).Count) {
+                        return (Invoke-OfficeDispatch $inner 'Item' $Flags $plain $null)
+                    }
+                    break
+                }
+            }
+        }
+    }
+    [KitOfficeCom]::Invoke($o, $Name, [int]$Flags, $Argv, $named)
 }
 
 # One step of a path. When a member given arguments takes none itself (Workbooks(1) in
