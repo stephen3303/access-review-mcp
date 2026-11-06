@@ -487,6 +487,17 @@ function Resolve-OfficeArgs([object[]]$Values) {
 
 $script:FlagGet = [Reflection.BindingFlags]::InvokeMethod -bor [Reflection.BindingFlags]::GetProperty
 
+# A call through the adapter. The adapter wants [ref] for by-reference parameters (Word's
+# Range(Start, End)), which JSON arguments can't carry, so that one refusal is retried
+# through InvokeMember, which passes by-reference arguments as they are.
+function Invoke-OfficeAdapterCall($Member, $Obj, [string]$Name, [Reflection.BindingFlags]$Flags, [object[]]$Plain) {
+    try { return , $Member.Invoke($Plain) }
+    catch {
+        if ($_.Exception.Message -notlike '*PSReference*') { throw }
+        return , [KitOfficeCom]::Invoke($Obj, $Name, [int]$Flags, $Plain, [string[]]@())
+    }
+}
+
 # One IDispatch call. Without named arguments it goes through PowerShell's own COM
 # adapter, which reads the type library and calls each member the way it is declared
 # (method, property, or property with parameters such as Range("A1")); Office apps
@@ -507,7 +518,7 @@ function Invoke-OfficeDispatch($Obj, [string]$Name, [Reflection.BindingFlags]$Fl
             switch ($m.MemberType) {
                 'Method' {
                     if ($isSet) { break }
-                    return , $m.Invoke($plain)
+                    return , (Invoke-OfficeAdapterCall $m $o $Name ([Reflection.BindingFlags]::InvokeMethod) $plain)
                 }
                 'ParameterizedProperty' {
                     if ($isSet) {
@@ -515,7 +526,7 @@ function Invoke-OfficeDispatch($Obj, [string]$Name, [Reflection.BindingFlags]$Fl
                         for ($k = 0; $k -lt $idx.Count; $k++) { $idx[$k] = $plain[$k] }
                         $m.InvokeSet($plain[$plain.Count - 1], $idx); return
                     }
-                    return , $m.Invoke($plain)
+                    return , (Invoke-OfficeAdapterCall $m $o $Name ([Reflection.BindingFlags]::GetProperty) $plain)
                 }
                 'Property' {
                     if ($isSet -and $plain.Count -eq 1) { $m.Value = $plain[0]; return }

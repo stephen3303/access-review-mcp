@@ -38,6 +38,10 @@ public class FakeOfficeSheets {
     public int Count = 2;
     public FakeOfficeSheet Item(int i) { return new FakeOfficeSheet { Name = "S" + i }; }
 }
+public class FakeOfficeDoc {
+    public string Text = "Review heading";
+    public string Span(ref int start, ref int end) { return Text.Substring(start, end - start); }
+}
 public class FakeOfficeBook {
     public FakeOfficeSheets Worksheets = new FakeOfficeSheets();
     public string Name = "Book1";
@@ -110,6 +114,17 @@ Check 'refused member stops the walk before any call' ($refused -and $script:Cal
 $refused = $false
 try { $null = Invoke-OfficeMember -Target $id -Path 'Take' -Arguments @('=cmd|''/c calc''!A0') } catch { $refused = $_.Exception.Message -like '*DDE*' }
 Check 'refused argument stops the call' ($refused -and $book.Received -eq 'grid 2x2 Int32')
+
+# By-reference parameters (Word's Range(Start, End)): the adapter refuses plain values,
+# so the call is retried through InvokeMember.
+$doc = New-Object FakeOfficeDoc
+$span = $doc.PSObject.Members.Match('Span') | Select-Object -First 1
+$adapterRefuses = $false
+try { $null = $span.Invoke([object[]]@(0, 6)) } catch { $adapterRefuses = $_.Exception.Message -like '*PSReference*' }
+Check 'adapter refuses by-reference arguments (the case being covered)' $adapterRefuses
+$got = $null
+try { $got = Invoke-OfficeAdapterCall $span $doc 'Span' ([Reflection.BindingFlags]::InvokeMethod) ([object[]]@(0, 6)) } catch { $got = $_.Exception.Message }
+Check 'by-reference arguments retried through InvokeMember' ($got -eq 'Review') "$got"
 
 Write-Host ''
 if ($failures) { Write-Host "$failures check(s) failed"; exit 1 }
