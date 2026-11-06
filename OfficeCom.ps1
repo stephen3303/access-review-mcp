@@ -176,7 +176,7 @@ function Assert-OfficeCallAllowed {
 }
 
 # The plain .NET object behind a PowerShell wrapper (COM can't take the wrapper).
-function Get-OfficeBase($v) { if ($null -ne $v -and $v.PSObject) { $v = $v.PSObject.BaseObject }; if ($v -is [Array]) { return , $v }; $v }
+function Get-OfficeBase($v) { if ($null -ne $v -and $v.PSObject) { $v = $v.PSObject.BaseObject }; , $v }
 
 # A JSON value (from ConvertFrom-Json) as a COM argument: whole numbers as Int32 (a VBA
 # Long rejects Int64) or Double, decimals as Double, an array of equal-length arrays
@@ -200,8 +200,8 @@ function ConvertTo-OfficeComValue($Value, [scriptblock]$Resolve) {
         for ($k = 0; $k -lt $rows.Count; $k++) { $list[$k] = Get-OfficeBase (ConvertTo-OfficeComValue $rows[$k] $Resolve) }
         return , $list
     }
-    if ($Value.PSObject.Properties['handle'] -and @($Value.PSObject.Properties).Count -eq 1) { return (& $Resolve ([string]$Value.handle)) }
-    if ($Value.PSObject.Properties['OfficeHandle']) { return (& $Resolve ([string]$Value.OfficeHandle)) }
+    if ($Value.PSObject.Properties['handle'] -and @($Value.PSObject.Properties).Count -eq 1) { return , (& $Resolve ([string]$Value.handle)) }
+    if ($Value.PSObject.Properties['OfficeHandle']) { return , (& $Resolve ([string]$Value.OfficeHandle)) }
     throw "Unsupported argument value: $($Value | ConvertTo-Json -Compress -Depth 3)"
 }
 

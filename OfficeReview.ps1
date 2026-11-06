@@ -267,10 +267,12 @@ function Test-OfficeRegistered([string]$ProgId) {
 # True for a COM object (OfficeMember.Tests.ps1 replaces it to drive the walk with plain .NET objects).
 function Test-OfficeObject($v) { $v -is [__ComObject] }
 
+# Always returned with a leading comma: a function's output is unrolled, and a COM
+# collection (a Range of many cells, a Sheets object) would come back as its items, or
+# hang while Excel lists every cell of Cells.
 function Unwrap($v) {
     if ($null -ne $v -and $v.PSObject) { $v = $v.PSObject.BaseObject }
-    if ($v -is [Array]) { return , $v }
-    $v
+    , $v
 }
 
 function Set-OfficeProp($obj, [string]$Name, $Value) {
@@ -278,7 +280,7 @@ function Set-OfficeProp($obj, [string]$Name, $Value) {
 }
 
 function Get-OfficeProp($obj, [string]$Name) {
-    try { Invoke-OfficeDispatch $obj $Name ([Reflection.BindingFlags]::GetProperty) @() $null } catch { $null }
+    try { , (Invoke-OfficeDispatch $obj $Name ([Reflection.BindingFlags]::GetProperty) @() $null) } catch { $null }
 }
 
 # The innermost error message, with its HRESULT.
@@ -472,7 +474,7 @@ function ConvertTo-OfficeResult($Value, [string]$App, [int]$MaxCells = 10000) {
 # --- the generic layer ---
 
 function Resolve-OfficeArgs([object[]]$Values) {
-    $resolve = { param($id) (Get-OfficeHandle $id).Obj }
+    $resolve = { param($id) , (Get-OfficeHandle $id).Obj }
     $out = New-Object object[] @($Values).Count
     $i = 0
     foreach ($v in @($Values)) {
@@ -505,7 +507,7 @@ function Invoke-OfficeDispatch($Obj, [string]$Name, [Reflection.BindingFlags]$Fl
             switch ($m.MemberType) {
                 'Method' {
                     if ($isSet) { break }
-                    return $m.Invoke($plain)
+                    return , $m.Invoke($plain)
                 }
                 'ParameterizedProperty' {
                     if ($isSet) {
@@ -513,34 +515,34 @@ function Invoke-OfficeDispatch($Obj, [string]$Name, [Reflection.BindingFlags]$Fl
                         for ($k = 0; $k -lt $idx.Count; $k++) { $idx[$k] = $plain[$k] }
                         $m.InvokeSet($plain[$plain.Count - 1], $idx); return
                     }
-                    return $m.Invoke($plain)
+                    return , $m.Invoke($plain)
                 }
                 'Property' {
                     if ($isSet -and $plain.Count -eq 1) { $m.Value = $plain[0]; return }
-                    if (-not $isSet -and -not $plain.Count) { return $m.Value }
+                    if (-not $isSet -and -not $plain.Count) { return , $m.Value }
                     # A property given arguments, as VBA reads it: the arguments go to the
                     # value's default member, Item (Worksheets(1), Cells(2, 3)).
                     $inner = Unwrap $m.Value
                     if ((Test-OfficeObject $inner) -and @($inner.PSObject.Members.Match('Item')).Count) {
-                        return (Invoke-OfficeDispatch $inner 'Item' $Flags $plain $null)
+                        return , (Invoke-OfficeDispatch $inner 'Item' $Flags $plain $null)
                     }
                     break
                 }
             }
         }
     }
-    [KitOfficeCom]::Invoke($o, $Name, [int]$Flags, $Argv, $named)
+    , [KitOfficeCom]::Invoke($o, $Name, [int]$Flags, $Argv, $named)
 }
 
 # One step of a path. When a member given arguments takes none itself (Workbooks(1) in
 # Word's Documents(1) style), reads the member and applies the arguments to its Item.
 function Invoke-OfficeStep($Obj, $Seg, [object[]]$Argv) {
-    try { return (Invoke-OfficeDispatch $Obj $Seg.Name $script:FlagGet $Argv $Seg.Names) }
+    try { return , (Invoke-OfficeDispatch $Obj $Seg.Name $script:FlagGet $Argv $Seg.Names) }
     catch {
         $hr = 0; $e = $_.Exception; while ($e.InnerException) { $e = $e.InnerException }; $hr = $e.HResult
         if ($Argv.Count -and -not $Seg.Names.Count -and ($hr -eq 0x8002000E -or $hr -eq -2147352562)) {
             $coll = Invoke-OfficeDispatch $Obj $Seg.Name $script:FlagGet @() $null
-            return (Invoke-OfficeDispatch $coll 'Item' $script:FlagGet $Argv $null)
+            return , (Invoke-OfficeDispatch $coll 'Item' $script:FlagGet $Argv $null)
         }
         throw
     }

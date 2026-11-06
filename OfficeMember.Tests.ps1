@@ -22,8 +22,10 @@ function Check([string]$what, [bool]$ok, [string]$detail = '') {
 
 if (-not ('FakeOfficeBook' -as [type])) {
     Add-Type @'
-public class FakeOfficeRange {
+public class FakeOfficeRange : System.Collections.IEnumerable {
     public object Value2 = 7;
+    // A real Range enumerates its cells; PowerShell unrolls such output unless kept whole.
+    public System.Collections.IEnumerator GetEnumerator() { return new object[] { 1, 2, 3 }.GetEnumerator(); }
     public string Address(bool rowAbs, bool colAbs) { return "A1:C3"; }
 }
 public class FakeOfficeSheet {
@@ -62,12 +64,12 @@ function Invoke-OfficeDispatch($Obj, [string]$Name, [Reflection.BindingFlags]$Fl
     if ($f) {
         if ($Flags -band [Reflection.BindingFlags]::SetProperty) { $f.SetValue($o, $plain[$plain.Count - 1]); return }
         $v = $f.GetValue($o)
-        if ($plain.Count) { return (Invoke-OfficeDispatch $v 'Item' $Flags $plain $null) }
-        return $v
+        if ($plain.Count) { return , (Invoke-OfficeDispatch $v 'Item' $Flags $plain $null) }
+        return , $v
     }
     $m = $o.GetType().GetMethod($Name)
     if (-not $m) { throw "Unknown name $Name" }
-    $m.Invoke($o, $plain)
+    , $m.Invoke($o, $plain)
 }
 $script:OfficeSessions['excel'] = [pscustomobject]@{ App = 'excel'; Label = 'Excel'; Com = $null; Pid = 0; Process = $null; Started = $true; Mode = 'hidden'; Dialogs = @() }
 
@@ -79,6 +81,11 @@ $script:Calls.Clear()
 $r = Invoke-OfficeMember -Target $id -Path "Worksheets(1).Range('A1').Value2"
 Check 'path walks one member at a time' (($script:Calls -join ' ') -eq 'Worksheets/1 Item/1 Range/1 Value2/0') ($script:Calls -join ' ')
 Check 'value at the end of the path' ($r.Value -eq 7)
+
+$r = Invoke-OfficeMember -Target $id -Path "Worksheets(1).Range('A3:B3')"
+Check 'enumerable result stays one object (a handle)' ($r.Value.Handle -match '^h\d+$') ($r | ConvertTo-Json -Compress -Depth 4)
+$r = Invoke-OfficeMember -Target $id -Path "Worksheets(1).UsedRange.Address(false, false)"
+Check 'member read through an enumerable object' ($r.Value -eq 'A1:C3') ($r | ConvertTo-Json -Compress -Depth 4)
 
 $r = Invoke-OfficeMember -Target $id -Path 'Worksheets(2)' -Fields @('Name', 'UsedRange.Address(false, false)')
 Check 'object result comes back as a handle' ($r.Value.Handle -match '^h\d+$')
