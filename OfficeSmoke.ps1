@@ -33,9 +33,15 @@ $script:id = 0
 function Rpc([string]$method, $params) {
     $script:id++
     $stdin.WriteLine((@{ jsonrpc = '2.0'; id = $script:id; method = $method; params = $params } | ConvertTo-Json -Depth 20 -Compress))
-    $line = $server.StandardOutput.ReadLine()
-    if ($null -eq $line) { throw "Server stopped. Its log: $($errTask.Result)" }
-    $line | ConvertFrom-Json
+    # Responses are matched by id; any other line on stdout is a server bug (stdout is
+    # only for JSON-RPC), so it is reported as a failure.
+    while ($true) {
+        $line = $server.StandardOutput.ReadLine()
+        if ($null -eq $line) { throw "Server stopped. Its log: $($errTask.Result)" }
+        $msg = $null; try { $msg = $line | ConvertFrom-Json } catch {}
+        if ($msg -and $msg.PSObject.Properties['id'] -and $msg.id -eq $script:id) { return $msg }
+        Check 'nothing but JSON-RPC replies on stdout' $false $(if ($line.Length -gt 300) { $line.Substring(0, 300) } else { $line })
+    }
 }
 
 # Calls a tool; returns @{ Ok; Text; Data (parsed JSON when the text is JSON); Image }.
@@ -48,7 +54,7 @@ function Tool([string]$name, [hashtable]$a = @{}) {
 
 try {
     $init = Rpc 'initialize' @{ protocolVersion = '2025-06-18'; capabilities = @{}; clientInfo = @{ name = 'office-smoke'; version = '1' } }
-    Check 'server starts (0.7.0)' ($init.result.serverInfo.version -eq '0.7.0')
+    Check 'server starts (0.7.0)' ($init.result.serverInfo.version -eq '0.7.0') ($init | ConvertTo-Json -Compress -Depth 4)
     $names = @((Rpc 'tools/list' @{}).result.tools | ForEach-Object name)
     foreach ($t in 'office_apps', 'office_start', 'office_invoke', 'office_members', 'excel_range', 'word_text', 'powerpoint_slides', 'outlook_items', 'office_run_macro') { Check "tool $t listed" ($names -contains $t) }
 

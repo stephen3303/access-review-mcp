@@ -125,6 +125,12 @@ try {
 } catch { Write-Host $_.Exception.Message }
 Check 'KitOfficeCom compiles' $compiled
 if ($compiled) { Check 'TypeName of a plain object is null' ($null -eq [KitOfficeCom]::TypeName('text')) }
+if ($compiled) {
+    $wrapped = [object[]]@([psobject]::AsPSObject(1))
+    $sub = [KitOfficeCom]::Invoke('abc', 'Substring', [int][Reflection.BindingFlags]::InvokeMethod, $wrapped, $null)
+    Check 'Invoke unwraps PowerShell-wrapped arguments' ($sub -eq 'bc')
+    Check 'Invoke passes named arguments' ([KitOfficeCom]::Invoke('abcd', 'Substring', [int][Reflection.BindingFlags]::InvokeMethod, [object[]]@(2, 1), [string[]]@('length')) -eq 'bc')
+}
 
 Write-Host ''
 if ($failures) { Write-Host "$failures check(s) failed"; exit 1 }

@@ -44,7 +44,8 @@ $ErrorActionPreference = 'Stop'
 
 if (-not ('KitOfficeCom' -as [type])) {
     Add-Type @'
-using System; using System.Collections.Generic; using System.Runtime.InteropServices;
+using System; using System.Collections.Generic; using System.Reflection; using System.Runtime.InteropServices;
+using System.Runtime.ExceptionServices;
 using ComTypes = System.Runtime.InteropServices.ComTypes;
 
 [ComImport, Guid("00020400-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -56,6 +57,35 @@ interface IKitDispatchInfo {
 // Reads what a COM object offers from its type information (IDispatch.GetTypeInfo), so
 // the tools can describe any object model without a hand-written list.
 public static class KitOfficeCom {
+    // The plain value behind a PowerShell wrapper, inside arrays too: COM would get a
+    // wrapper as an IDispatch of its own, and the app would fail to read it.
+    static object Base(object o) {
+        var p = o as System.Management.Automation.PSObject;
+        if (p != null) o = p.BaseObject;
+        var a = o as Array;
+        if (a != null && a.Rank == 2) {
+            for (int i = a.GetLowerBound(0); i <= a.GetUpperBound(0); i++)
+                for (int j = a.GetLowerBound(1); j <= a.GetUpperBound(1); j++) a.SetValue(Base(a.GetValue(i, j)), i, j);
+        } else if (a != null && a.Rank == 1 && a.GetType().GetElementType() == typeof(object)) {
+            for (int i = a.GetLowerBound(0); i <= a.GetUpperBound(0); i++) a.SetValue(Base(a.GetValue(i)), i);
+        }
+        return o;
+    }
+
+    // IDispatch call made here rather than from PowerShell, so PowerShell's method binder
+    // never rewrites the arguments. Named arguments come first in args.
+    public static object Invoke(object target, string name, int flags, object[] args, string[] names) {
+        target = Base(target);
+        var a = new object[args == null ? 0 : args.Length];
+        for (int i = 0; i < a.Length; i++) a[i] = Base(args[i]);
+        try {
+            return target.GetType().InvokeMember(name, (BindingFlags)flags, null, target, a, null, null, (names != null && names.Length > 0) ? names : null);
+        } catch (TargetInvocationException e) {
+            if (e.InnerException != null) ExceptionDispatchInfo.Capture(e.InnerException).Throw();
+            throw;
+        }
+    }
+
     static ComTypes.ITypeInfo Info(object o) {
         var d = o as IKitDispatchInfo;
         if (d == null) return null;
@@ -189,6 +219,30 @@ function Test-OfficePathAllowed([string]$Path) {
     [bool]@($roots | Where-Object { $full.TrimEnd('\') -ieq ([IO.Path]::GetFullPath($_).TrimEnd('\')) -or (Test-PathInFolder $full $_) }).Count
 }
 
+# Refuses a path that goes through a junction or symbolic link below the allowed or
+# output folder it is in (the name check alone could then lead outside), and a file
+# downloaded from the internet (Mark of the Web, zone 3 or 4).
+function Assert-OfficeFileSafe([string]$Path) {
+    $full = [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $roots = @(((Get-ReviewSetting 'ACCESS_REVIEW_ALLOWED_FOLDERS') -split ';') | ForEach-Object { $_.Trim() } | Where-Object { $_ -and (Test-FullPath $_) })
+    $roots += Get-ReviewOutputBase
+    foreach ($r in $roots) {
+        $root = [IO.Path]::GetFullPath($r).TrimEnd('\')
+        if (-not ($full -ieq $root -or (Test-PathInFolder $full $root))) { continue }
+        for ($p = $full; $p -and $p.Length -gt $root.Length; $p = [IO.Path]::GetDirectoryName($p)) {
+            $link = (Get-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue).LinkType
+            if ($link -in 'Junction', 'SymbolicLink') { throw "'$Path' goes through the $link '$p', which may lead outside $root. Use the real location." }
+        }
+    }
+    if (Test-Path -LiteralPath $full -PathType Leaf) {
+        $zone = $null
+        try { $zone = Get-Content -LiteralPath $full -Stream Zone.Identifier -ErrorAction Stop } catch {}
+        if ($zone -and (($zone -join "`n") -match '(?m)^ZoneId=([34])\s*$')) {
+            throw "'$Path' was downloaded from the internet (Zone.Identifier ZoneId=$($Matches[1])), so it is not opened. If you trust it, unblock it first (file Properties, Unblock)."
+        }
+    }
+}
+
 function Get-OfficeRoots {
     $r = @(((Get-ReviewSetting 'ACCESS_REVIEW_ALLOWED_FOLDERS') -split ';') | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     ($r + @(Get-ReviewOutputBase)) -join '; '
@@ -229,7 +283,10 @@ function Get-OfficeError($err) {
     $e = $err; if ($e -is [Management.Automation.ErrorRecord]) { $e = $e.Exception }
     while ($e.InnerException) { $e = $e.InnerException }
     $msg = $e.Message
-    if ($e -is [Runtime.InteropServices.COMException] -or $e.HResult -band 0x80000000) { $msg += ' (0x{0:X8})' -f $e.HResult }
+    if ($e -is [Runtime.InteropServices.COMException]) { $msg += ' (0x{0:X8})' -f $e.HResult }
+    elseif ($err -is [Management.Automation.ErrorRecord] -and $err.InvocationInfo -and $err.InvocationInfo.ScriptLineNumber) {
+        $msg += " ($(Split-Path -Leaf $err.InvocationInfo.ScriptName) line $($err.InvocationInfo.ScriptLineNumber))"
+    }
     $msg
 }
 
@@ -422,8 +479,9 @@ function Resolve-OfficeArgs([object[]]$Values) {
 $script:FlagGet = [Reflection.BindingFlags]::InvokeMethod -bor [Reflection.BindingFlags]::GetProperty
 
 function Invoke-OfficeDispatch($Obj, [string]$Name, [Reflection.BindingFlags]$Flags, [object[]]$Argv, [string[]]$Names) {
-    $named = $null; if ($Names -and $Names.Count) { $named = [string[]]$Names }
-    [System.__ComObject].InvokeMember($Name, $Flags, $null, (Unwrap $Obj), $Argv, $null, $null, $named)
+    $named = [string[]]@(); if ($Names) { $named = [string[]]@($Names | Where-Object { $_ }) }
+    if ($null -eq $Argv) { $Argv = @() }
+    [KitOfficeCom]::Invoke($Obj, $Name, [int]$Flags, $Argv, $named)
 }
 
 # One step of a path. When a member given arguments takes none itself (Workbooks(1) in
@@ -581,7 +639,7 @@ function Open-OfficeDocument {
     $Path = [IO.Path]::GetFullPath($Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "'$Path' does not exist. office_open opens existing files; office_new makes a blank one." }
     if (-not (Test-OfficePathAllowed $Path)) { throw "'$Path' is outside the folders these tools may use ($(Get-OfficeRoots))." }
-    Assert-ReviewFileAllowed $Path   # Mark of the Web, junctions and links
+    Assert-OfficeFileSafe $Path
     if (-not $s.Started) { throw "$($s.Label) is the user's own instance; documents are not opened in it." }
     $com = $s.Com
     $win = $s.Mode -ne 'hidden'
@@ -655,7 +713,7 @@ function Assert-OfficeOutPath([string]$Path, [bool]$Overwrite) {
     if (-not (Test-OfficePathAllowed $Path)) { throw "'$Path' is outside the folders these tools may write ($(Get-OfficeRoots))." }
     $dir = Split-Path -Parent $Path
     if (-not (Test-Path -LiteralPath $dir -PathType Container)) { throw "Folder '$dir' does not exist." }
-    Assert-ReviewFileAllowed $dir
+    Assert-OfficeFileSafe $dir
     if ((Test-Path -LiteralPath $Path) -and -not $Overwrite) { throw "'$Path' exists. Pass overwrite=true to replace it." }
     $Path
 }
@@ -752,7 +810,7 @@ function Invoke-OfficeMacro {
     $argv = Resolve-OfficeArgs $Arguments
     $r = Invoke-OfficeGuarded -App $h.App -TimeoutSec $TimeoutSec -Body {
         if ($h.App -eq 'word') { try { [void]$d.Activate() } catch {} }
-        [System.__ComObject].InvokeMember('Run', [Reflection.BindingFlags]::InvokeMethod, $null, $s.Com, ([object[]](@($full) + @($argv))))
+        [KitOfficeCom]::Invoke($s.Com, 'Run', [int][Reflection.BindingFlags]::InvokeMethod, ([object[]](@($full) + @($argv))), $null)
     }
     [pscustomobject]@{ Macro = $full; Result = (ConvertTo-OfficeResult $r.Value $h.App); Dialogs = $r.Dialogs }
 }
