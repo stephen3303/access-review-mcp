@@ -118,7 +118,7 @@ function ConvertFrom-OfficePath {
         if ($s[$i] -ne '.') { & $fail 'expected .' }
         $i++
     }
-    , $segs.ToArray()
+    $segs.ToArray()   # callers wrap the result in @()
 }
 
 # Why a member may not be used, or $null.

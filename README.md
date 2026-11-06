@@ -19,6 +19,7 @@ OneNotePage.Tests.ps1   checks for OneNotePage.ps1
 OfficeReview.ps1      the Office tools (Excel, Word, PowerPoint, Outlook... over COM)
 OfficeCom.ps1         member paths, safety rules and value conversion (no Office needed)
 OfficeCom.Tests.ps1   checks for OfficeCom.ps1
+OfficeMember.Tests.ps1  checks the office_invoke member walk with stand-in objects (no Office needed)
 OfficeSmoke.ps1       end-to-end check of the Office tools on a review machine with Office
 manifest.json         desktop extension manifest (for the .mcpb package)
 ```

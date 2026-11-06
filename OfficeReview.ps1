@@ -264,6 +264,9 @@ function Test-OfficeRegistered([string]$ProgId) {
 
 # The plain .NET object behind a PowerShell wrapper: a wrapped value inside an argument
 # array would reach COM as a PowerShell object (type mismatch). Arrays come back whole.
+# True for a COM object (OfficeMember.Tests.ps1 replaces it to drive the walk with plain .NET objects).
+function Test-OfficeObject($v) { $v -is [__ComObject] }
+
 function Unwrap($v) {
     if ($null -ne $v -and $v.PSObject) { $v = $v.PSObject.BaseObject }
     if ($v -is [Array]) { return , $v }
@@ -493,7 +496,7 @@ function Invoke-OfficeDispatch($Obj, [string]$Name, [Reflection.BindingFlags]$Fl
     if ($null -eq $Argv) { $Argv = @() }
     $o = Unwrap $Obj
     $isSet = [bool]($Flags -band [Reflection.BindingFlags]::SetProperty)
-    if (-not $named.Count -and $o -is [__ComObject]) {
+    if (-not $named.Count -and (Test-OfficeObject $o)) {
         $m = $null
         try { $m = @($o.PSObject.Members.Match($Name) | Where-Object { $_.MemberType -in 'Method', 'ParameterizedProperty', 'Property' }) | Select-Object -First 1 } catch {}
         if ($m) {
@@ -518,7 +521,7 @@ function Invoke-OfficeDispatch($Obj, [string]$Name, [Reflection.BindingFlags]$Fl
                     # A property given arguments, as VBA reads it: the arguments go to the
                     # value's default member, Item (Worksheets(1), Cells(2, 3)).
                     $inner = Unwrap $m.Value
-                    if ($inner -is [__ComObject] -and @($inner.PSObject.Members.Match('Item')).Count) {
+                    if ((Test-OfficeObject $inner) -and @($inner.PSObject.Members.Match('Item')).Count) {
                         return (Invoke-OfficeDispatch $inner 'Item' $Flags $plain $null)
                     }
                     break
@@ -572,9 +575,9 @@ function Invoke-OfficeMember {
         $cur = $t.Obj
         for ($i = 0; $i -lt $segs.Count; $i++) {
             $seg = $segs[$i]; $last = $i -eq $segs.Count - 1
-            if ($null -eq $cur -or -not ((Unwrap $cur) -is [__ComObject])) { throw "'$(($segs[0..([Math]::Max(0, $i - 1))] | ForEach-Object Name) -join '.')' is not an object, so '$($seg.Name)' can't be read from it." }
+            if ($null -eq $cur -or -not (Test-OfficeObject (Unwrap $cur))) { throw "'$(($segs[0..([Math]::Max(0, $i - 1))] | ForEach-Object Name) -join '.')' is not an object, so '$($seg.Name)' can't be read from it." }
             $argv = Resolve-OfficeArgs @($seg.Args)
-            if ($last -and $Arguments) { $argv = [object[]](@($argv) + @(Resolve-OfficeArgs @($Arguments))) }
+            if ($last -and $Arguments) { $argv = [object[]](@($argv) + (Resolve-OfficeArgs @($Arguments))) }
             if ($last -and $Set) {
                 $v = Resolve-OfficeArgs @(, $omValue)
                 [void](Invoke-OfficeDispatch $cur $seg.Name ([Reflection.BindingFlags]::SetProperty) ([object[]](@($argv) + @($v))) $seg.Names)
@@ -585,7 +588,7 @@ function Invoke-OfficeMember {
         }
         $res = [ordered]@{ Value = (ConvertTo-OfficeResult $cur $app $MaxCells) }
         $obj = Unwrap $cur
-        if ($obj -is [__ComObject]) {
+        if (Test-OfficeObject $obj) {
             if ($fieldSegs.Count) { $res.Fields = Read-OfficeFields $obj $fieldSegs $Fields $app }
             if ($Enumerate) {
                 $count = [int](Invoke-OfficeDispatch $obj 'Count' $script:FlagGet @() $null)
@@ -631,7 +634,7 @@ function Get-OfficeMembers {
         $cur = $t.Obj
         foreach ($sg in $segs) { $cur = Invoke-OfficeStep $cur $sg (Resolve-OfficeArgs @($sg.Args)) }
         $obj = Unwrap $cur
-        if (-not ($obj -is [__ComObject])) { throw "'$Path' is a value ($obj), not an object." }
+        if (-not (Test-OfficeObject $obj)) { throw "'$Path' is a value ($obj), not an object." }
         $rows = @([KitOfficeCom]::Members($obj))
         $by = [ordered]@{}
         foreach ($row in $rows) {
