@@ -559,9 +559,20 @@ function Invoke-OfficeStep($Obj, $Seg, [object[]]$Argv) {
     }
 }
 
+# Reading a range's cells copies all of them over COM before any output limit applies,
+# so a range bigger than the limit is refused before it is read.
+$script:OfficeCellReads = @('Value', 'Value2', 'Formula', 'Formula2', 'FormulaR1C1', 'FormulaLocal', 'FormulaR1C1Local', 'Text')
+function Assert-OfficeCellCount($Range, [int]$MaxCells) {
+    $n = $null
+    try { $n = [long](Invoke-OfficeDispatch $Range 'CountLarge' $script:FlagGet @() $null) } catch { return }
+    if ($n -gt $MaxCells) { throw "That range has $n cells; at most $MaxCells are read at once. Ask for a smaller range." }
+}
+
 function Assert-OfficeArgs([string]$App, $Seg, [object[]]$Raw) {
     $plain = @(foreach ($r in $Raw) { if ($null -ne $r -and $r.PSObject -and ($r.PSObject.Properties['OfficeMissing'] -or $r.PSObject.Properties['OfficeHandle'])) { $null } else { $r } })
-    Assert-OfficeCallAllowed -App $App -Member $Seg.Name -Arguments $plain -InAllowed { param($p) Test-OfficePathAllowed $p }
+    # A path argument must sit in an allowed folder (lexically) and pass the same checks
+    # office_open makes: no junction or link hop out of the folder, no Mark of the Web.
+    Assert-OfficeCallAllowed -App $App -Member $Seg.Name -Arguments $plain -InAllowed { param($p) if (-not (Test-OfficePathAllowed $p)) { return $false }; Assert-OfficeFileSafe $p; $true }
 }
 
 # Walks a member path from a target, and reads the end (get), sets it (Value given) or
@@ -574,6 +585,7 @@ function Invoke-OfficeMember {
     $t = Resolve-OfficeTarget $Target
     $segs = @(ConvertFrom-OfficePath $Path)
     if ($Set -and -not $segs.Count) { throw 'Give the property to set as the path.' }
+    if ($Set -and $t.App -eq 'outlook') { throw 'Outlook is read only for these tools: properties can be read, not set.' }
     $fieldSegs = @(foreach ($f in @($Fields)) { if ($f) { , @(ConvertFrom-OfficePath $f) } })
     # Check every member and argument before the first call, so a refused path changes nothing.
     for ($i = 0; $i -lt $segs.Count; $i++) {
@@ -589,6 +601,7 @@ function Invoke-OfficeMember {
         for ($i = 0; $i -lt $segs.Count; $i++) {
             $seg = $segs[$i]; $last = $i -eq $segs.Count - 1
             if ($null -eq $cur -or -not (Test-OfficeObject (Unwrap $cur))) { throw "'$(($segs[0..([Math]::Max(0, $i - 1))] | ForEach-Object Name) -join '.')' is not an object, so '$($seg.Name)' can't be read from it." }
+            if ($last -and -not $Set -and $app -eq 'excel' -and $seg.Name -in $script:OfficeCellReads) { Assert-OfficeCellCount $cur $MaxCells }
             $argv = Resolve-OfficeArgs @($seg.Args)
             if ($last -and $Arguments) { $argv = [object[]](@($argv) + (Resolve-OfficeArgs @($Arguments))) }
             if ($last -and $Set) {
@@ -895,6 +908,7 @@ function Invoke-ExcelRange {
         $ws = $(if ($Sheet -match '^\d+$') { $wb.Worksheets.Item([int]$Sheet) } elseif ($Sheet) { $wb.Worksheets.Item($Sheet) } else { $wb.ActiveSheet })
         $rng = $ws.Range($Range)
         $cells = [long]$rng.CountLarge
+        if ($cells -gt 10000) { throw "$Range has $cells cells; at most 10000 are read at once. Ask for a smaller range." }
         if ($null -ne $Values) {
             $v = ConvertTo-OfficeComValue $Values { param($id) throw 'No handles in cell values.' }
             $prop = $(if ($AsFormulas) { 'Formula' } else { 'Value2' })

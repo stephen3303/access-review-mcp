@@ -55,6 +55,8 @@ foreach ($m in 'Evaluate', 'DDEInitiate', 'Shell', 'SendKeys', 'OnTime', 'VBE', 
     Check "$m refused" ([bool](Get-OfficeMemberRefusal 'word' $m))
 }
 Check 'Outlook Delete refused' ([bool](Get-OfficeMemberRefusal 'outlook' 'Delete'))
+Check 'Outlook Save refused (read only)' ([bool](Get-OfficeMemberRefusal 'outlook' 'Save'))
+Check 'Excel Save allowed' (-not (Get-OfficeMemberRefusal 'excel' 'Save'))
 Check 'Excel Delete allowed' (-not (Get-OfficeMemberRefusal 'excel' 'Delete'))
 Check 'Access RunSQL refused' ([bool](Get-OfficeMemberRefusal 'access' 'RunSQL'))
 Check 'ordinary members allowed' (-not (Get-OfficeMemberRefusal 'excel' 'Range') -and -not (Get-OfficeMemberRefusal 'word' 'Execute'))

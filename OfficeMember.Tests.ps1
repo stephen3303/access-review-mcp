@@ -24,6 +24,7 @@ if (-not ('FakeOfficeBook' -as [type])) {
     Add-Type @'
 public class FakeOfficeRange : System.Collections.IEnumerable {
     public object Value2 = 7;
+    public long CountLarge = 1;
     // A real Range enumerates its cells; PowerShell unrolls such output unless kept whole.
     public System.Collections.IEnumerator GetEnumerator() { return new object[] { 1, 2, 3 }.GetEnumerator(); }
     public string Address(bool rowAbs, bool colAbs) { return "A1:C3"; }
@@ -32,7 +33,7 @@ public class FakeOfficeSheet {
     public string Name;
     public FakeOfficeRange UsedRange = new FakeOfficeRange();
     public string LastRange;
-    public FakeOfficeRange Range(string a) { LastRange = a; return new FakeOfficeRange(); }
+    public FakeOfficeRange Range(string a) { LastRange = a; return new FakeOfficeRange { CountLarge = a == "A:XFD" ? 17179869184L : 1 }; }
 }
 public class FakeOfficeSheets {
     public int Count = 2;
@@ -83,7 +84,7 @@ Check 'handle for an object' ($id -eq 'h1')
 
 $script:Calls.Clear()
 $r = Invoke-OfficeMember -Target $id -Path "Worksheets(1).Range('A1').Value2"
-Check 'path walks one member at a time' (($script:Calls -join ' ') -eq 'Worksheets/1 Item/1 Range/1 Value2/0') ($script:Calls -join ' ')
+Check 'path walks one member at a time' (($script:Calls -join ' ') -eq 'Worksheets/1 Item/1 Range/1 CountLarge/0 Value2/0') ($script:Calls -join ' ')
 Check 'value at the end of the path' ($r.Value -eq 7)
 
 $r = Invoke-OfficeMember -Target $id -Path "Worksheets(1).Range('A3:B3')"
@@ -114,6 +115,17 @@ Check 'refused member stops the walk before any call' ($refused -and $script:Cal
 $refused = $false
 try { $null = Invoke-OfficeMember -Target $id -Path 'Take' -Arguments @('=cmd|''/c calc''!A0') } catch { $refused = $_.Exception.Message -like '*DDE*' }
 Check 'refused argument stops the call' ($refused -and $book.Received -eq 'grid 2x2 Int32')
+
+$refused = $false
+try { $null = Invoke-OfficeMember -Target $id -Path "Worksheets(1).Range('A:XFD').Value2" } catch { $refused = $_.Exception.Message -like '*at most*' }
+Check 'oversized range refused before its cells are read' $refused
+function Get-ReviewSetting($Name) { if ($Name -eq 'ACCESS_REVIEW_OFFICE_APPS') { 'excel;outlook' } }
+$script:OfficeSessions['outlook'] = [pscustomobject]@{ App = 'outlook'; Label = 'Outlook'; Com = $null; Pid = 0; Process = $null; Started = $true; Mode = 'hidden'; Dialogs = @() }
+$mail = Add-OfficeHandle (New-Object FakeOfficeBook) 'outlook'
+$refused = $false
+try { $null = Invoke-OfficeMember -Target $mail -Path 'Name' -Set -Value 'x' } catch { $refused = $_.Exception.Message -like '*read only*' }
+Check 'Outlook property writes refused' $refused
+Check 'Outlook properties still read' ((Invoke-OfficeMember -Target $mail -Path 'Name').Value -eq 'Book1')
 
 # By-reference parameters (Word's Range(Start, End)): the adapter refuses plain values,
 # so the call is retried through InvokeMember.

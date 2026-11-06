@@ -30,7 +30,7 @@ $script:OfficeDeniedMembers = @(
 # Further members refused per app: Outlook works on a real mailbox, so items are read,
 # never deleted, moved or sent.
 $script:OfficeDeniedByApp = @{
-    outlook = @('Delete', 'PermanentDelete', 'Move', 'MoveTo', 'Forward', 'Reply', 'ReplyAll', 'Respond', 'ClearConversationIndex', 'AddStore', 'AddStoreEx', 'RemoveStore', 'Logon', 'Logoff')
+    outlook = @('Delete', 'PermanentDelete', 'Move', 'MoveTo', 'Forward', 'Reply', 'ReplyAll', 'Respond', 'ClearConversationIndex', 'AddStore', 'AddStoreEx', 'RemoveStore', 'Logon', 'Logoff', 'Save', 'SaveAs', 'Close', 'Copy', 'CopyTo', 'Add', 'Remove', 'Undelete', 'Display', 'Execute', 'MarkAsTask', 'ClearTaskFlag', 'ShowCategoriesDialog', 'Import', 'CreateItem', 'CreateItemFromTemplate', 'AddMember', 'RemoveMember', 'Accept', 'Decline', 'Cancel', 'Assign', 'MarkComplete')
     access  = @('RunSQL', 'RunCode', 'RunCommand', 'RunSavedImportExport', 'TransferSharePointList', 'CloseCurrentDatabase', 'OpenCurrentDatabase', 'NewCurrentDatabase', 'CompactRepair', 'ConvertAccessProject', 'CreateAccessProject')
 }
 
