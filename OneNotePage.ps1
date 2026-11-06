@@ -150,15 +150,21 @@ function Compare-OneNoteLines([string[]]$Before, [string[]]$After) {
     $L = New-Object 'int[,]' ($n + 1), ($m + 1)
     for ($i = $n - 1; $i -ge 0; $i--) {
         for ($j = $m - 1; $j -ge 0; $j--) {
-            $L[$i, $j] = if ($Before[$i] -ceq $After[$j]) { $L[($i + 1), ($j + 1)] + 1 } else { [Math]::Max($L[($i + 1), $j], $L[$i, ($j + 1)]) }
+            # Windows PowerShell 5.1 can't parse a 2-D index with expressions inside a
+            # method call's arguments, so the neighbours are read into variables first.
+            $i1 = $i + 1; $j1 = $j + 1
+            if ($Before[$i] -ceq $After[$j]) { $L[$i, $j] = $L[$i1, $j1] + 1 }
+            else { $down = $L[$i1, $j]; $right = $L[$i, $j1]; $L[$i, $j] = [Math]::Max($down, $right) }
         }
     }
     $out = New-Object Collections.Generic.List[string]
     $i = 0; $j = 0
     while ($i -lt $n -and $j -lt $m) {
         if ($Before[$i] -ceq $After[$j]) { $i++; $j++ }
-        elseif ($L[($i + 1), $j] -ge $L[$i, ($j + 1)]) { $out.Add("- $($Before[$i])"); $i++ }
-        else { $out.Add("+ $($After[$j])"); $j++ }
+        else {
+            $i1 = $i + 1; $j1 = $j + 1; $down = $L[$i1, $j]; $right = $L[$i, $j1]
+            if ($down -ge $right) { $out.Add("- $($Before[$i])"); $i++ } else { $out.Add("+ $($After[$j])"); $j++ }
+        }
     }
     while ($i -lt $n) { $out.Add("- $($Before[$i])"); $i++ }
     while ($j -lt $m) { $out.Add("+ $($After[$j])"); $j++ }
